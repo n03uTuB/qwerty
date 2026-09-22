@@ -1,0 +1,17 @@
+[data] всего изображений: 252  устройство: cpu
+  fold 0: best_ep=14  train_loss=0.2258  val_n=51  q_f1=0.621  q_auc=0.681  region_acc=1.000
+  fold 1: best_ep=2  train_loss=0.1547  val_n=51  q_f1=0.667  q_auc=0.708  region_acc=1.000
+  fold 2: best_ep=11  train_loss=0.1506  val_n=50  q_f1=0.600  q_auc=0.773  region_acc=1.000
+  fold 3: best_ep=5  train_loss=0.2091  val_n=50  q_f1=0.500  q_auc=0.642  region_acc=1.000
+  fold 4: best_ep=11  train_loss=0.1958  val_n=50  q_f1=0.611  q_auc=0.737  region_acc=1.000
+
+[CV] время: 5851.8s
+[CV] quality: {"n": 249, "pos": 73, "auc": 0.6894458281444582, "auc_ci": [0.6196237446119238, 0.7531414966828129], "ap": 0.49908037824200246, "ap_ci": [0.3978098383014967, 0.6207387584535851], "f1_at_05": 0.4520547945205479, "f1_best": 0.5402843601895735, "thr_best": 0.14999999999999997, "precision": 0.41304347826086957, "recall": 0.7808219178082192, "balanced_acc": 0.6602973225404732, "tp": 57, "fp": 81, "fn": 16, "tn": 95, "specificity": 0.5397727272727273, "sensitivity": 0.7808219178082192}
+[CV] region_accuracy: 1.0
+[CV] violation_macro_f1: 0.37769591980555434
+    spine_positioning: {'n': 99, 'pos': 6, 'auc': 0.6290322580645161, 'f1_best': 0.20408163265306123, 'thr_best': 0.13999999999999999, 'f1_at_05': 0.0}
+    spine_axis: {'n': 99, 'pos': 10, 'auc': 0.5011235955056179, 'f1_best': 0.23255813953488372, 'thr_best': 0.42999999999999994, 'f1_at_05': 0.11764705882352941}
+    spine_artifacts: {'n': 99, 'pos': 17, 'auc': 0.7080344332855093, 'f1_best': 0.43636363636363634, 'thr_best': 0.36999999999999994, 'f1_at_05': 0.20689655172413793}
+    femur_positioning: {'n': 150, 'pos': 36, 'auc': 0.6805555555555555, 'f1_best': 0.48214285714285715, 'thr_best': 0.22999999999999998, 'f1_at_05': 0.38235294117647056}
+    femur_roi: {'n': 150, 'pos': 7, 'auc': 0.7942057942057942, 'f1_best': 0.5333333333333333, 'thr_best': 0.6499999999999999, 'f1_at_05': 0.4}
+[full] сохранено: C:\Users\Антон\Desktop\hak\dxa_qc\artifacts\best_model.pt (loss=0.1185)

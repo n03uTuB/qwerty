@@ -1,0 +1,17 @@
+# Зафиксированные зависимости DXA-QC (инференс, CPU/GPU)
+# Для GPU-инференса на целевой конфигурации (H200) установите torch/torchvision
+# из индекса CUDA соответствующей версии (см. Dockerfile, ARG TORCH_INDEX_URL).
+numpy==2.2.6
+pandas==2.3.3
+scikit-learn==1.7.2
+joblib==1.6.0
+pydicom==3.0.2
+opencv-python-headless==4.11.0.86
+Pillow==12.3.0
+openpyxl==3.1.5
+fastapi==0.141.1
+uvicorn==0.53.0
+python-multipart==0.0.32
+# torch/torchvision ставятся отдельно (см. Dockerfile), чтобы выбрать CPU/CUDA
+# torch==2.14.0
+# torchvision==0.29.0

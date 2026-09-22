@@ -1,0 +1,22 @@
+# Мини-PACS для демо: docker compose up -d
+# Веб-интерфейс: http://localhost:8042/ui/app/   DICOM: порт 4242, AE ORTHANC
+services:
+  orthanc:
+    image: orthancteam/orthanc:latest  # перед хакатоном закрепите конкретную версию
+    ports:
+      - "8042:8042"
+      - "4242:4242"
+    environment:
+      ORTHANC__NAME: "DXA-SANDBOX"
+      ORTHANC__AUTHENTICATION_ENABLED: "false"  # только для локальной песочницы
+      DICOM_WEB_PLUGIN_ENABLED: "true"
+      STONE_WEB_VIEWER_PLUGIN_ENABLED: "true"
+      # наш сервис как DICOM-узел: Orthanc сможет отправлять ему исследования
+      ORTHANC__DICOM_MODALITIES: '{"dxaqc": ["DXAQC", "host.docker.internal", 11112]}'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - orthanc-db:/var/lib/orthanc/db
+
+volumes:
+  orthanc-db:

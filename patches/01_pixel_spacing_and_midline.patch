@@ -1,0 +1,489 @@
+﻿diff --git a/a/src/api.py b/b/src/api.py
+index d0be093..7b80a35 100644
+--- a/a/src/api.py
++++ b/b/src/api.py
+@@ -92,10 +92,10 @@ async def predict_image(file: UploadFile = File(...)):
+     tmp.write(data)
+     tmp.close()
+     try:
+-        _ds, arr = dicom_io.read_dicom(tmp.name)
++        ds, arr = dicom_io.read_dicom(tmp.name)
+         if arr is None:
+             raise HTTPException(400, "не удалось прочитать пиксельные данные DICOM")
+-        res = get_controller().predict_array(np.asarray(arr))
++        res = get_controller().predict_array(np.asarray(arr), dicom_io.pixel_spacing(ds, arr))
+     finally:
+         os.unlink(tmp.name)
+     return _row_from_result(res["region"], res)
+@@ -117,7 +117,7 @@ async def predict_upload_batch(files: List[UploadFile] = File(...),
+             ds, arr = dicom_io.read_dicom(tmp.name)
+             if arr is None:
+                 raise ValueError("нет пиксельных данных")
+-            res = ctrl.predict_array(np.asarray(arr))
++            res = ctrl.predict_array(np.asarray(arr), dicom_io.pixel_spacing(ds, arr))
+             row = _row_from_result(res["region"], res)
+             row.update(study_uid=study_uid or "", image_uid=str(getattr(ds, "SOPInstanceUID", "")),
+                        filename=f.filename, processing_status="Success",
+diff --git a/a/src/calibrate.py b/b/src/calibrate.py
+index e50a6c3..e2e9bd8 100644
+--- a/a/src/calibrate.py
++++ b/b/src/calibrate.py
+@@ -32,11 +32,16 @@ def main():
+             source = "stack"
+     print("[calibrate] источник OOF-вероятностей (нарушения):", source)
+ 
++    # пороги калибруем только по реальным снимкам: на синтетике доля нарушений искусственная
++    real = ds.real_mask(manifest)
++    if not real.all():
++        print(f"[calibrate] синтетических строк исключено: {int((~real).sum())}")
++
+     thresholds = {}
+ 
+     # --- качество (общий порог) ---
+     y = manifest["quality"].values.astype(float)
+-    valid = ~np.isnan(y) & ~np.isnan(oof_q)
++    valid = ~np.isnan(y) & ~np.isnan(oof_q) & real
+     if valid.sum() and len(np.unique(y[valid])) > 1:
+         thr, f1 = best_threshold(y[valid], oof_q[valid])
+         thresholds["quality"] = dict(threshold=float(thr), f1=float(f1),
+@@ -47,7 +52,7 @@ def main():
+     # --- качество по каждой анатомической области ---
+     qbr = {}
+     for region in C.REGIONS:
+-        m = (manifest["region"] == region).values
++        m = (manifest["region"] == region).values & real
+         yr = manifest["quality"].values[m].astype(float)
+         pr = oof_q[m]
+         vr = ~np.isnan(yr) & ~np.isnan(pr)
+@@ -67,7 +72,7 @@ def main():
+         if col not in manifest:
+             continue
+         yv = manifest[col].values.astype(float)
+-        val = ~np.isnan(yv) & ~np.isnan(oof_v[:, i])
++        val = ~np.isnan(yv) & ~np.isnan(oof_v[:, i]) & real
+         if val.sum() and len(np.unique(yv[val])) > 1:
+             thr, f1 = best_threshold(yv[val], oof_v[val, i])
+             vth[name] = dict(threshold=float(thr), f1=float(f1),
+diff --git a/a/src/config.py b/b/src/config.py
+index c986a77..fd0a28d 100644
+--- a/a/src/config.py
++++ b/b/src/config.py
+@@ -89,8 +89,14 @@ VIOLATION_LABELS_UNIQUE = [
+ VIOLATION_SEP = "; "        # разделитель при нескольких нарушениях
+ VIOLATION_EMPTY = ""        # при отсутствии нарушений поле пустое
+ 
+-# Физический размер пикселя сканера (мм): ось X = 0.6, ось Y = 1.05
+-PIXEL_SPACING_MM = (0.6, 1.05)   # (x, y)
++# Размер пикселя берётся ИЗ САМОГО СНИМКА: тег (0040,0303) Exposed Area хранит физический
++# размер снятой области в мм. Тег присутствует во всех 499 файлах набора; деление на размер
++# кадра даёт пиксель 0.607 x 0.608 мм, то есть КВАДРАТНЫЙ (а не 0.6 x 1.05, как считалось).
++# Прежнее значение занижало все углы в 1.75 раза: наклон оси 5° измерялся как 2.9°.
++# Значение ниже используется только как запасное, если тега нет.
++PIXEL_SPACING_MM = (0.6, 0.6)   # (x, y)
++EXPOSED_AREA_TAG = (0x0040, 0x0303)
++PIXEL_SPACING_LIMITS = (0.2, 2.0)   # отсев мусорных значений тега
+ 
+ # --------------------------------------------------------------------------- #
+ # Гиперпараметры модели/обучения
+diff --git a/a/src/dataset.py b/b/src/dataset.py
+index 743d023..4916a65 100644
+--- a/a/src/dataset.py
++++ b/b/src/dataset.py
+@@ -133,6 +133,7 @@ def build_manifest(dataset_root: str, manifest_csv: str = C.MANIFEST_CSV,
+             if not os.path.isfile(cache_path):
+                 Image.fromarray(dicom_io.normalize_uint8(arr)).save(cache_path)
+ 
++            spacing_x, spacing_y = dicom_io.pixel_spacing(ds, arr)
+             row = dict(
+                 study_uid=study_uid,
+                 image_uid=image_uid,
+@@ -142,7 +143,13 @@ def build_manifest(dataset_root: str, manifest_csv: str = C.MANIFEST_CSV,
+                 region_idx=C.REGION_TO_IDX[region],
+                 rows=int(arr.shape[0]),
+                 cols=int(arr.shape[1]),
++                # реальный масштаб снимка из Exposed Area — нужен для углов и сантиметров
++                spacing_x=spacing_x,
++                spacing_y=spacing_y,
+                 quality=quality,
++                # синтетические строки (см. scripts/make_synthetic_for_dxa_qc.py) идут
++                # только в обучение и исключаются из метрик, порогов и отчёта
++                synthetic=False,
+             )
+             for i, name in enumerate(C.VIOLATIONS):
+                 row["viol_" + name] = viol[i]
+@@ -249,4 +256,14 @@ def load_manifest(manifest_csv: str = C.MANIFEST_CSV) -> pd.DataFrame:
+     for c in ["quality"] + ["viol_" + n for n in C.VIOLATIONS]:
+         if c in df:
+             df[c] = pd.to_numeric(df[c], errors="coerce")
++    if "synthetic" not in df:
++        df["synthetic"] = False
++    df["synthetic"] = df["synthetic"].fillna(False).astype(bool)
+     return df
++
++
++def real_mask(df: pd.DataFrame) -> np.ndarray:
++    """Маска настоящих снимков: по ним считаются все метрики."""
++    if "synthetic" not in df:
++        return np.ones(len(df), dtype=bool)
++    return ~df["synthetic"].fillna(False).values.astype(bool)
+diff --git a/a/src/dicom_io.py b/b/src/dicom_io.py
+index 1d21414..d62e830 100644
+--- a/a/src/dicom_io.py
++++ b/b/src/dicom_io.py
+@@ -59,6 +59,29 @@ def read_dicom(path: str):
+     return ds, arr
+ 
+ 
++def pixel_spacing(ds, arr: Array) -> Tuple[float, float]:
++    """Размер пикселя (мм по X, мм по Y) из тега (0040,0303) Exposed Area.
++
++    В наборе нет PixelSpacing, но Exposed Area хранит физический размер снятой области
++    в миллиметрах. Деление на размер кадра даёт реальный масштаб каждого снимка, поэтому
++    углы и сантиметры считаются по факту, а не по предположению.
++    """
++    try:
++        area = ds.get(C.EXPOSED_AREA_TAG)
++        if area is None or arr is None or len(area.value) < 2:
++            return C.PIXEL_SPACING_MM
++        width_mm, height_mm = float(area.value[0]), float(area.value[1])
++        rows, cols = arr.shape[:2]
++        sx = width_mm / cols if cols and width_mm > 0 else C.PIXEL_SPACING_MM[0]
++        sy = height_mm / rows if rows and height_mm > 0 else C.PIXEL_SPACING_MM[1]
++    except Exception:
++        return C.PIXEL_SPACING_MM
++    lo, hi = C.PIXEL_SPACING_LIMITS
++    if not (lo <= sx <= hi and lo <= sy <= hi):
++        return C.PIXEL_SPACING_MM
++    return sx, sy
++
++
+ def dedupe_unique_images(files: List[str]) -> List[Tuple[str, object, Array]]:
+     """Уникальные изображения исследования (по содержимому пикселей).
+ 
+diff --git a/a/src/features.py b/b/src/features.py
+index 7a07941..661dc0b 100644
+--- a/a/src/features.py
++++ b/b/src/features.py
+@@ -20,8 +20,8 @@ from . import config as C
+ FEATURES_CSV = os.path.join(C.ARTIFACTS_DIR, "features.csv")
+ 
+ # Набор геометрических признаков (имена фиксированы)
+-FEATURE_NAMES = ["spine_axis_angle", "femur_axis_angle", "bone_eccentricity",
+-                 "bright_area_ratio", "vertical_symmetry"]
++FEATURE_NAMES = ["spine_axis_angle", "spine_midline_angle", "femur_axis_angle",
++                 "bone_eccentricity", "bright_area_ratio", "vertical_symmetry"]
+ 
+ 
+ def _principal_axis(mask: np.ndarray, spacing=(1.0, 1.0)):
+@@ -51,7 +51,8 @@ def _principal_axis(mask: np.ndarray, spacing=(1.0, 1.0)):
+     return float(angle), ecc
+ 
+ 
+-def spine_axis_angle(arr: np.ndarray, thr_pct: float = 90.0) -> float:
++def spine_axis_angle(arr: np.ndarray, thr_pct: float = 90.0,
++                     spacing=C.PIXEL_SPACING_MM) -> float:
+     """Оценка отклонения оси позвоночника от вертикали (в градусах).
+ 
+     Позвоночник выделяется как яркая компактная структура; вычисляется угол
+@@ -66,28 +67,71 @@ def spine_axis_angle(arr: np.ndarray, thr_pct: float = 90.0) -> float:
+         return 0.0
+     thr = np.percentile(roi, thr_pct)
+     mask = roi >= thr
+-    angle, _ = _principal_axis(mask, C.PIXEL_SPACING_MM)
++    angle, _ = _principal_axis(mask, spacing)
+     return angle
+ 
+ 
+-def femur_axis_angle(arr: np.ndarray, thr_pct: float = 92.0) -> float:
++def spine_midline_angle(arr: np.ndarray, spacing=C.PIXEL_SPACING_MM,
++                        level: float = 0.25) -> float:
++    """Наклон оси по средней линии позвоночного столба (градусы к вертикали).
++
++    Главная ось всей яркой области занижает наклон: её «тянет» вертикальная протяжённость
++    снимка. Врач же смотрит на линию, проходящую через центры тел позвонков. На наборе
++    организатора этот признак отделяет метку «ось не выровнена» заметно лучше
++    (AUC 0.83 против 0.73 у spine_axis_angle), а его значения совпадают со шкалой ТЗ:
++    медиана 5.0° при нарушении против 2.5° в норме (в ТЗ примеры 6.9° и 1.6°).
++    """
++    from scipy import ndimage
++
++    f = arr.astype(np.float32)
++    rows, cols = f.shape
++    band = f[: int(rows * 0.8), int(cols * 0.2): int(cols * 0.8)]
++    if band.size == 0 or band.max() <= band.min():
++        return 0.0
++    # порог между мягкими тканями и костью (перцентильный порог режет губчатую часть)
++    soft, dense = np.percentile(band, (50, 98))
++    if dense <= soft:
++        return 0.0
++    mask = band > soft + (dense - soft) * level
++    mask = ndimage.binary_fill_holes(ndimage.binary_closing(mask, np.ones((5, 5))))
++    centers, ys = [], []
++    for row in range(mask.shape[0]):
++        xs = np.nonzero(mask[row])[0]
++        if len(xs) < 3:
++            continue
++        groups = np.split(xs, np.nonzero(np.diff(xs) > 1)[0] + 1)
++        longest = max(groups, key=len)
++        if len(longest) < 3:
++            continue
++        centers.append(float(longest.mean()))
++        ys.append(float(row))
++    if len(centers) < 20:
++        return 0.0
++    slope, _ = np.polyfit(np.array(ys), np.array(centers), 1)
++    sx, sy = spacing
++    return float(np.degrees(np.arctan2(abs(slope) * sx, sy)))
++
++
++def femur_axis_angle(arr: np.ndarray, thr_pct: float = 92.0,
++                     spacing=C.PIXEL_SPACING_MM) -> float:
+     """Наклон главной оси бедренной кости (в градусах от вертикали)."""
+     f = arr.astype(np.float32)
+     if f.max() <= f.min():
+         return 0.0
+     thr = np.percentile(f, thr_pct)
+     mask = f >= thr
+-    angle, _ = _principal_axis(mask, C.PIXEL_SPACING_MM)
++    angle, _ = _principal_axis(mask, spacing)
+     return angle
+ 
+ 
+-def bone_eccentricity(arr: np.ndarray, thr_pct: float = 92.0) -> float:
++def bone_eccentricity(arr: np.ndarray, thr_pct: float = 92.0,
++                      spacing=C.PIXEL_SPACING_MM) -> float:
+     """Вытянутость костной структуры (отношение главных дисперсий)."""
+     f = arr.astype(np.float32)
+     if f.max() <= f.min():
+         return 0.0
+     thr = np.percentile(f, thr_pct)
+-    _angle, ecc = _principal_axis(f >= thr, C.PIXEL_SPACING_MM)
++    _angle, ecc = _principal_axis(f >= thr, spacing)
+     return ecc
+ 
+ 
+@@ -115,12 +159,17 @@ def vertical_symmetry(arr: np.ndarray) -> float:
+     return float(abs(left - right) / (col.sum() + 1e-9))
+ 
+ 
+-def compute_features(arr: np.ndarray) -> dict:
+-    """Полный вектор геометрических признаков для изображения."""
++def compute_features(arr: np.ndarray, spacing=C.PIXEL_SPACING_MM) -> dict:
++    """Полный вектор геометрических признаков для изображения.
++
++    spacing — реальный размер пикселя снимка (dicom_io.pixel_spacing). От него зависят
++    все углы: при ошибочном соотношении сторон наклон оси занижается в 1.75 раза.
++    """
+     return {
+-        "spine_axis_angle": spine_axis_angle(arr),
+-        "femur_axis_angle": femur_axis_angle(arr),
+-        "bone_eccentricity": bone_eccentricity(arr),
++        "spine_axis_angle": spine_axis_angle(arr, spacing=spacing),
++        "spine_midline_angle": spine_midline_angle(arr, spacing=spacing),
++        "femur_axis_angle": femur_axis_angle(arr, spacing=spacing),
++        "bone_eccentricity": bone_eccentricity(arr, spacing=spacing),
+         "bright_area_ratio": bright_area_ratio(arr),
+         "vertical_symmetry": vertical_symmetry(arr),
+     }
+@@ -135,7 +184,9 @@ def build_features(manifest_csv: str = C.MANIFEST_CSV,
+     rows = []
+     for _, r in df.iterrows():
+         arr = np.asarray(Image.open(r["cache_path"]).convert("L"))
+-        feat = compute_features(arr)
++        spacing = (float(r["spacing_x"]), float(r["spacing_y"])) \
++            if "spacing_x" in df.columns and pd.notna(r.get("spacing_x")) else C.PIXEL_SPACING_MM
++        feat = compute_features(arr, spacing)
+         feat["image_uid"] = r["image_uid"]
+         feat["study_uid"] = r["study_uid"]
+         rows.append(feat)
+diff --git a/a/src/inference.py b/b/src/inference.py
+index 6cc6a44..3f3db73 100644
+--- a/a/src/inference.py
++++ b/b/src/inference.py
+@@ -99,7 +99,7 @@ class QualityController:
+                 self.stackers = {}
+ 
+     @torch.no_grad()
+-    def predict_array(self, arr: np.ndarray) -> Dict:
++    def predict_array(self, arr: np.ndarray, spacing=None) -> Dict:
+         img = dicom_io.preprocess(arr, self.size)
+         x = torch.from_numpy(img).unsqueeze(0).unsqueeze(0).float().to(self.device)
+ 
+@@ -119,7 +119,8 @@ class QualityController:
+         # --- гибридная коррекция (CNN + геометрия) ---
+         feat = None
+         if self.stackers:
+-            feat = self._feature_fn(np.asarray(arr))
++            # масштаб снимка обязателен: от него зависят углы (см. dicom_io.pixel_spacing)
++            feat = self._feature_fn(np.asarray(arr), spacing or C.PIXEL_SPACING_MM)
+ 
+         q_region = float(q[ridx])
+         if feat is not None and "quality" in self.stackers:
+@@ -166,10 +167,10 @@ class QualityController:
+         )
+ 
+     def predict_image(self, path: str) -> Dict:
+-        _ds, arr = dicom_io.read_dicom(path)
++        ds, arr = dicom_io.read_dicom(path)
+         if arr is None:
+             raise ValueError("не удалось прочитать пиксельные данные: %s" % path)
+-        return self.predict_array(np.asarray(arr))
++        return self.predict_array(np.asarray(arr), dicom_io.pixel_spacing(ds, arr))
+ 
+ 
+ def process_study(controller: QualityController, study_uid: str, study_path: str) -> List[dict]:
+@@ -191,7 +192,7 @@ def process_study(controller: QualityController, study_uid: str, study_path: str
+         ts = time.time()
+         image_uid = str(getattr(ds, "SOPInstanceUID", "") or "")
+         try:
+-            res = controller.predict_array(np.asarray(arr))
++            res = controller.predict_array(np.asarray(arr), dicom_io.pixel_spacing(ds, arr))
+             status = "Success"
+             viol_text = violation_text_ru(res["violation_names"])
+             row = dict(
+diff --git a/a/src/report.py b/b/src/report.py
+index 77f27c1..3804424 100644
+--- a/a/src/report.py
++++ b/b/src/report.py
+@@ -110,22 +110,26 @@ def main():
+ 
+     out = {"overall": {}, "by_region": {}, "violations": {}}
+ 
++    # отчёт строим ТОЛЬКО по реальным снимкам: синтетика участвует лишь в обучении
++    real = ds.real_mask(df)
++    out["n_synthetic_excluded"] = int((~real).sum())
++
+     # ---- качество: общее и по областям ----
+-    out["overall"] = quality_block(df["quality"].values, oof_q)
++    out["overall"] = quality_block(df["quality"].values[real], oof_q[real])
+     for region in C.REGIONS:
+-        m = (df["region"] == region).values
++        m = (df["region"] == region).values & real
+         out["by_region"][region] = quality_block(df["quality"].values[m], oof_q[m])
+ 
+     # ---- точность определения области ----
+-    valid_r = ~np.isnan(oof_r[:, 0])
++    valid_r = ~np.isnan(oof_r[:, 0]) & real
+     out["region_accuracy"] = float(
+         (oof_r[valid_r].argmax(1) == df["region_idx"].values[valid_r]).mean())
+ 
+     # ---- нарушения ----
+     for i, name in enumerate(C.VIOLATIONS):
+         col = "viol_" + name
+-        y = df[col].values.astype(float)
+-        p = oof_v[:, i]
++        y = df[col].values.astype(float)[real]
++        p = oof_v[real, i]
+         out["violations"][name] = quality_block(y, p)
+ 
+     # ---- сохранение json ----
+diff --git a/a/src/stack.py b/b/src/stack.py
+index 6cbe497..60dd57e 100644
+--- a/a/src/stack.py
++++ b/b/src/stack.py
+@@ -34,7 +34,8 @@ STACK_METRICS = os.path.join(C.ARTIFACTS_DIR, "stack_metrics.json")
+ # пустой список = оставить только нейросетевую вероятность.
+ CRITERION_FEATURES = {
+     "spine_positioning": ["spine_axis_angle", "vertical_symmetry"],
+-    "spine_axis": ["femur_axis_angle"],
++    # угол по средней линии столба — прямое измерение критерия ТЗ (допуск 5°)
++    "spine_axis": ["spine_midline_angle", "spine_axis_angle"],
+     "spine_artifacts": ["bone_eccentricity"],
+     "femur_positioning": [],
+     "femur_roi": ["bone_eccentricity"],
+@@ -92,6 +93,11 @@ def main():
+     oof_v = np.load(os.path.join(C.ARTIFACTS_DIR, "oof_violation.npy"))
+ 
+     data = feat_lib.load_features(manifest)
++    # стекер и его метрики — только по реальным снимкам (синтетика нужна лишь CNN).
++    # Строки не выбрасываем, иначе разъедется индексация с OOF-массивами и манифестом.
++    real = ds.real_mask(data)
++    if not real.all():
++        print(f"[stack] синтетических строк исключено из оценки: {int((~real).sum())}")
+     groups = data["study_uid"].values
+     results = {"quality": {}, "violations": {}, "comparison": {}}
+ 
+@@ -101,7 +107,7 @@ def main():
+ 
+     # --- качество ---
+     y = data["quality"].values.astype(float)
+-    valid = ~np.isnan(y) & ~np.isnan(oof_q)
++    valid = ~np.isnan(y) & ~np.isnan(oof_q) & real
+     X = data[QUALITY_FEATURES].fillna(0).values if QUALITY_FEATURES else \
+         np.zeros((n, 0), dtype=float)
+     idx = np.where(valid)[0]
+@@ -115,7 +121,7 @@ def main():
+     # --- нарушения ---
+     for j, name in enumerate(C.VIOLATIONS):
+         yv = data["viol_" + name].values.astype(float)
+-        val = ~np.isnan(yv) & ~np.isnan(oof_v[:, j])
++        val = ~np.isnan(yv) & ~np.isnan(oof_v[:, j]) & real
+         if val.sum() == 0 or len(np.unique(yv[val])) < 2:
+             results["violations"][name] = dict(n=int(val.sum()), f1=None, auc=None)
+             continue
+@@ -141,7 +147,7 @@ def main():
+         stackers = {}
+         for j, name in enumerate(C.VIOLATIONS):
+             yv = data["viol_" + name].values.astype(float)
+-            val = ~np.isnan(yv) & ~np.isnan(oof_v[:, j])
++            val = ~np.isnan(yv) & ~np.isnan(oof_v[:, j]) & real
+             if val.sum() and len(np.unique(yv[val])) > 1:
+                 cols = CRITERION_FEATURES.get(name, QUALITY_FEATURES)
+                 Xv = data[cols].fillna(0).values if cols else \
+diff --git a/a/src/train.py b/b/src/train.py
+index f85ab70..923638e 100644
+--- a/a/src/train.py
++++ b/b/src/train.py
+@@ -235,6 +235,7 @@ def run_cv(df: pd.DataFrame, args):
+         # score = mean(ROC-AUC качества, macro ROC-AUC типов нарушений)
+         yv_all = va["quality"].values.astype(float)
+         reg_all = va["region_idx"].values
++        va_real = ds.real_mask(va)   # выбор эпохи — тоже по реальным снимкам
+         viol_y = {name: va["viol_" + name].values.astype(float) for name in C.VIOLATIONS}
+         best_score, best_state, best_ep = -1.0, None, -1
+         for ep in range(args.epochs):
+@@ -246,7 +247,7 @@ def run_cv(df: pd.DataFrame, args):
+                 pq_v, pv_v, _pr, idx_v = predict(model, va_loader, device)
+                 reg_v = reg_all[idx_v]
+                 q_v = pq_v[np.arange(len(va)), reg_v]
+-                vv = ~np.isnan(yv_all)
++                vv = ~np.isnan(yv_all) & va_real
+                 q_auc = -1.0
+                 if vv.sum() and len(np.unique(yv_all[vv])) > 1:
+                     q_auc = float(roc_auc_score(yv_all[vv], q_v[vv]))
+@@ -254,7 +255,7 @@ def run_cv(df: pd.DataFrame, args):
+                 v_aucs = []
+                 for j, name in enumerate(C.VIOLATIONS):
+                     yy = viol_y[name]
+-                    val = ~np.isnan(yy)
++                    val = ~np.isnan(yy) & va_real
+                     if val.sum() and len(np.unique(yy[val])) > 1:
+                         v_aucs.append(roc_auc_score(yy[val], pv_v[val, j]))
+                 v_auc = float(np.mean(v_aucs)) if v_aucs else -1.0
+@@ -288,11 +289,14 @@ def run_cv(df: pd.DataFrame, args):
+         print(f"  fold {k}: best_ep={best_ep}  train_loss={tr_loss:.4f}  val_n={len(va)}  "
+               f"q_f1={f1:.3f}  q_auc={auc:.3f}  region_acc={acc_r:.3f}")
+ 
++    # метрики считаем ТОЛЬКО по реальным снимкам: синтетика нужна для обучения
++    real = ds.real_mask(df)
+     metrics = {}
+-    metrics["quality"] = evaluate_quality(df, oof_q, np.ones(len(df), bool))
++    metrics["quality"] = evaluate_quality(df, oof_q, real)
++    region_valid = ~np.isnan(oof_r[:, 0]) & real
+     metrics["region_accuracy"] = float(
+-        (oof_r.argmax(1) == df["region_idx"].values)[~np.isnan(oof_r[:, 0])].mean()
+-        if np.any(~np.isnan(oof_r[:, 0])) else float("nan"))
++        (oof_r.argmax(1) == df["region_idx"].values)[region_valid].mean()
++        if np.any(region_valid) else float("nan"))
+ 
+     # нарушения (мультилейбл, macro-F1 по критериям с метками)
+     viol_metrics = {}
+@@ -302,7 +306,7 @@ def run_cv(df: pd.DataFrame, args):
+         if col not in df:
+             continue
+         y = df[col].values.astype(float)
+-        valid = ~np.isnan(y) & ~np.isnan(oof_v[:, i])
++        valid = ~np.isnan(y) & ~np.isnan(oof_v[:, i]) & real
+         if valid.sum() == 0 or len(np.unique(y[valid])) < 2:
+             viol_metrics[name] = dict(n=int(valid.sum()), f1=None)
+             continue
