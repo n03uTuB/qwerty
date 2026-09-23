@@ -290,6 +290,10 @@ def main():
            if v.get("threshold") is not None}
     oof_rows = []
     for i, row in df.iterrows():
+        # только реальные снимки: на синтетике доля нарушений искусственная, и
+        # метрики отчёта считаются без неё — выгрузка должна совпадать с отчётом
+        if not real[i]:
+            continue
         region = row["region"]
         qp = oof_q[i]
         if np.isnan(qp):
