@@ -1,6 +1,48 @@
-# Мини-PACS для демо: docker compose up -d
-# Веб-интерфейс: http://localhost:8042/ui/app/   DICOM: порт 4242, AE ORTHANC
+# Стек сервиса контроля качества DXA.
+#
+#   1) dxaqc — ИИ-сервис (FastAPI), GPU (H200 / любая NVIDIA с CUDA 12);
+#   2) orthanc — мини-PACS для демонстрации обмена DICOM.
+#
+# Запуск:
+#   docker compose up -d --build            # сервис + PACS
+#   docker compose run --rm dxaqc python -m src.predict --input /data/input --output /data/output/results.csv
+#
+# Требуется NVIDIA Container Toolkit на хосте:
+#   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
+# Проверка: docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+
 services:
+  dxaqc:
+    build:
+      context: ./dxa_qc
+      args:
+        # для GPU-образа раскомментируйте и укажите CUDA-индекс torch:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
+        # BASE_IMAGE: nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+    image: dxa-qc:gpu
+    ports:
+      - "8000:8000"
+    volumes:
+      # входные DICOM только для чтения, результаты — на запись
+      - ./data:/data/input:ro
+      - ./out:/data/output
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all              # 2 × H200: обе карты доступны процессу
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
   orthanc:
     image: orthancteam/orthanc:latest  # перед хакатоном закрепите конкретную версию
     ports:
@@ -12,7 +54,7 @@ services:
       DICOM_WEB_PLUGIN_ENABLED: "true"
       STONE_WEB_VIEWER_PLUGIN_ENABLED: "true"
       # наш сервис как DICOM-узел: Orthanc сможет отправлять ему исследования
-      ORTHANC__DICOM_MODALITIES: '{"dxaqc": ["DXAQC", "host.docker.internal", 11112]}'
+      ORTHANC__DICOM_MODALITIES: '{"dxaqc": ["DXAQC", "dxaqc", 8000]}'
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

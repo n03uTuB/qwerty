@@ -68,8 +68,12 @@ def pixel_spacing(ds, array: np.ndarray) -> tuple[float, float]:
     rows, cols = array.shape[:2]
     sx = width_mm / cols if cols and width_mm > 0 else PIXEL_SPACING_MM[0]
     sy = height_mm / rows if rows and height_mm > 0 else PIXEL_SPACING_MM[1]
-    # защита от мусорных значений в отдельных файлах
-    if not (0.2 <= sx <= 2.0 and 0.2 <= sy <= 2.0):
+    # защита от мусорных значений в отдельных файлах.
+    # Верхняя граница 1.2 мм: в наборе у части файлов тег Exposed Area равен
+    # мусорной константе [520,478] -> масштаб 1.7–1.9 мм вместо настоящих 0.60–0.65.
+    # Эти выбросы коррелировали с меткой (чаще у нарушений), т.е. давали утечку;
+    # отсечение возвращает честные значения.
+    if not (0.2 <= sx <= 1.2 and 0.2 <= sy <= 1.2):
         return PIXEL_SPACING_MM
     return sx, sy
 

@@ -18,7 +18,7 @@ import torch.nn as nn
 from sklearn.metrics import (average_precision_score, balanced_accuracy_score,
                              f1_score, precision_score, recall_score,
                              roc_auc_score)
-from sklearn.model_selection import GroupKFold
+from sklearn.model_selection import GroupKFold, GroupShuffleSplit, StratifiedGroupKFold
 from torch.utils.data import DataLoader
 
 from . import config as C
@@ -81,48 +81,46 @@ def compute_pos_weight_viol(df: pd.DataFrame) -> torch.Tensor:
 
 
 # --------------------------------------------------------------------------- #
-def train_epoch(model, loader, optimizer, device, pos_w_q, pos_w_v):
+def train_epoch(model, loader, optimizer, device, pos_w_q, pos_w_v,
+                scaler=None, loss_mode=C.QUALITY_LOSS):
     model.train()
     total = 0.0
+    use_amp = scaler is not None and device == "cuda"
     for batch in loader:
         x = batch["image"].to(device)
         region = batch["region"].to(device)
-        out = model(x)
+        quality = batch["quality"].to(device)
+        qmask = batch["quality_mask"].to(device)
+        viol = batch["viol"].to(device)
+        vmask = batch["viol_mask"].to(device)
 
-        l_region = nn.functional.cross_entropy(out["region"], region)
-
-        # выбираем логит качества, соответствующий области изображения
-        q_logit = out["quality"].gather(1, region.unsqueeze(1)).squeeze(1)
-        pw_q = None
-        if pos_w_q is not None:
-            pw_q = pos_w_q.to(device)[region]
-        l_quality = masked_bce(
-            q_logit, batch["quality"].to(device),
-            batch["quality_mask"].to(device), pw_q)
-
-        l_viol = masked_bce(
-            out["violation"], batch["viol"].to(device),
-            batch["viol_mask"].to(device),
-            pos_w_v.to(device) if pos_w_v is not None else None)
-
-        loss = 1.0 * l_region + 1.0 * l_quality + 1.0 * l_viol
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        with torch.autocast(device_type="cuda", enabled=use_amp):
+            out = model(x)
+            loss, _parts = model_lib.compute_loss(
+                out, region, quality, qmask, viol, vmask, pos_w_q, pos_w_v,
+                mode=loss_mode)
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
         total += float(loss) * len(x)
     return total / max(len(loader.dataset), 1)
 
 
 @torch.no_grad()
-def predict(model, loader, device):
+def predict(model, loader, device, tta: bool = False):
     model.eval()
     probs_q, probs_v, probs_r, idxs = [], [], [], []
     for batch in loader:
         x = batch["image"].to(device)
-        out = model(x)
-        probs_q.append(torch.sigmoid(out["quality"]).cpu().numpy())
-        probs_v.append(torch.sigmoid(out["violation"]).cpu().numpy())
-        probs_r.append(torch.softmax(out["region"], dim=1).cpu().numpy())
+        q, v, r = model_lib.predict_probs(model, x, tta=tta)
+        probs_q.append(q.cpu().numpy())
+        probs_v.append(v.cpu().numpy())
+        probs_r.append(r.cpu().numpy())
         idxs.append(batch["index"].numpy())
     return (np.concatenate(probs_q), np.concatenate(probs_v),
             np.concatenate(probs_r), np.concatenate(idxs))
@@ -166,6 +164,29 @@ def best_threshold(y, p):
     return bt, best
 
 
+def prior_threshold(y, p):
+    """Порог по ожидаемой доле нарушений.
+
+    Нарушением объявляем столько снимков, сколько их ожидается по обучающей выборке.
+    При 6–36 положительных примерах порог, максимизирующий F1, скачет от фолда к
+    фолду, а доля нарушений — самая надёжная величина, которая у нас есть.
+    """
+    prevalence = float(np.mean(y)) if len(y) else 0.0
+    if prevalence <= 0 or prevalence >= 1 or len(p) == 0:
+        return 0.5
+    count = max(1, int(round(prevalence * len(p))))
+    return float(np.sort(p)[::-1][min(count, len(p)) - 1])
+
+
+def pick_threshold(y, p, mode: str = None):
+    """Выбрать порог и вернуть (порог, F1). Режим — из config.THRESHOLD_MODE."""
+    mode = mode or getattr(C, "THRESHOLD_MODE", "prior")
+    if mode == "prior":
+        thr = prior_threshold(y, p)
+        return thr, float(f1_score(y, (p >= thr).astype(int), zero_division=0))
+    return best_threshold(y, p)
+
+
 def evaluate_quality(df, probs, mask_idx):
     y = df["quality"].values.astype(float)
     valid = ~np.isnan(y) & mask_idx
@@ -199,12 +220,53 @@ def evaluate_quality(df, probs, mask_idx):
 
 
 # --------------------------------------------------------------------------- #
+def _splitter(args, df, groups):
+    """Сплиттер с группировкой по study_uid.
+
+    StratifiedGroupKFold дополнительно выравнивает состав анатомических областей
+    между фолдами (стратификация по region_idx) — это важно, т.к. позвоночник и
+    бедро имеют разные критерии и разный баланс классов.
+    """
+    if C.USE_STRATIFIED_GROUP:
+        return StratifiedGroupKFold(n_splits=args.folds, shuffle=True,
+                                    random_state=C.SEED)
+    return GroupKFold(n_splits=args.folds)
+
+
+def _inner_score(model, loader, device) -> float:
+    """Комбинированная метрика для выбора эпохи на внутреннем холдауте.
+
+    score = среднее из ROC-AUC качества и macro ROC-AUC типов нарушений
+    (считается только по реальным снимкам, как и отчётные метрики).
+    """
+    pq, pv, _pr, idx = predict(model, loader, device, tta=False)
+    df = loader.dataset.df
+    real = ds.real_mask(df)
+    yq = df["quality"].values.astype(float)[idx]
+    reg = df["region_idx"].values[idx]
+    q = pq[np.arange(len(idx)), reg]
+    vv = ~np.isnan(yq) & real[idx]
+    parts = []
+    if vv.sum() and len(np.unique(yq[vv])) > 1:
+        parts.append(float(roc_auc_score(yq[vv], q[vv])))
+    v_aucs = []
+    for j, name in enumerate(C.VIOLATIONS):
+        y = df["viol_" + name].values.astype(float)[idx]
+        ok = ~np.isnan(y) & real[idx]
+        if ok.sum() and len(np.unique(y[ok])) > 1:
+            v_aucs.append(roc_auc_score(y[ok], pv[ok, j]))
+    if v_aucs:
+        parts.append(float(np.mean(v_aucs)))
+    return float(np.mean(parts)) if parts else -1.0
+
+
 def run_cv(df: pd.DataFrame, args):
     device = args.device
     labeled = df[df["quality"].notna()].copy()
 
-    gkf = GroupKFold(n_splits=args.folds)
+    splitter = _splitter(args, df, df["study_uid"].values)
     groups = df["study_uid"].values
+    y_strat = df["region_idx"].values
 
     oof_q = np.full(len(df), np.nan)
     oof_v = np.full((len(df), C.N_VIOLATIONS), np.nan)
@@ -212,8 +274,10 @@ def run_cv(df: pd.DataFrame, args):
 
     pos_w_q = compute_pos_weight_by_region(labeled, "quality")
     pos_w_v = compute_pos_weight_viol(labeled)
+    tta = bool(getattr(args, "tta", C.USE_TTA))
+    scaler = torch.cuda.amp.GradScaler(enabled=(device == "cuda" and C.USE_AMP))
 
-    for k, (tr_idx, va_idx) in enumerate(gkf.split(df, groups=groups)):
+    for k, (tr_idx, va_idx) in enumerate(splitter.split(df, y_strat, groups=groups)):
         tr = df.iloc[tr_idx].reset_index(drop=True)
         va = df.iloc[va_idx].reset_index(drop=True)
         tr_lab = tr[tr["quality"].notna()]
@@ -224,52 +288,48 @@ def run_cv(df: pd.DataFrame, args):
                                 weight_decay=C.WEIGHT_DECAY)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
 
-        tr_loader = DataLoader(ds.DXADataset(tr_lab, train=True, size=args.size),
+        # --- честный выбор лучшей эпохи: внутренний холдаут ВНУТРИ обучающего фолда ---
+        # Раньше эпоха выбиралась по валидационному фолду, из которого затем брались
+        # OOF-предсказания -> утечка и завышение метрик. Теперь выбор идёт по
+        # отдельным исследованиям, которые не участвуют в OOF.
+        inner_tr = tr_lab
+        inner_va = None
+        if getattr(args, "select_epoch", True) and len(tr_lab) > 20:
+            gss = GroupShuffleSplit(n_splits=1, test_size=0.25, random_state=C.SEED + k)
+            a, b = next(gss.split(tr_lab, groups=tr_lab["study_uid"].values))
+            inner_tr = tr_lab.iloc[a].reset_index(drop=True)
+            inner_va = tr_lab.iloc[b].reset_index(drop=True)
+
+        tr_loader = DataLoader(ds.DXADataset(inner_tr, train=True, size=args.size),
                                batch_size=args.batch, shuffle=True,
                                num_workers=C.NUM_WORKERS)
+        inner_loader = (DataLoader(ds.DXADataset(inner_va, train=False, size=args.size),
+                                   batch_size=args.batch, shuffle=False,
+                                   num_workers=C.NUM_WORKERS)
+                        if inner_va is not None else None)
         va_loader = DataLoader(ds.DXADataset(va, train=False, size=args.size),
                                batch_size=args.batch, shuffle=False,
                                num_workers=C.NUM_WORKERS)
 
-        # --- обучение с выбором лучшей эпохи по комбинированной метрике ---
-        # score = mean(ROC-AUC качества, macro ROC-AUC типов нарушений)
-        yv_all = va["quality"].values.astype(float)
-        reg_all = va["region_idx"].values
-        va_real = ds.real_mask(va)   # выбор эпохи — тоже по реальным снимкам
-        viol_y = {name: va["viol_" + name].values.astype(float) for name in C.VIOLATIONS}
         best_score, best_state, best_ep = -1.0, None, -1
         for ep in range(args.epochs):
-            tr_loss = train_epoch(model, tr_loader, opt, device, pos_w_q, pos_w_v)
+            tr_loss = train_epoch(model, tr_loader, opt, device, pos_w_q, pos_w_v,
+                                  scaler=scaler, loss_mode=C.QUALITY_LOSS)
             sched.step()
 
-            # периодическая валидация (каждые 3 эпохи и последняя)
+            if inner_loader is None:
+                best_ep = ep
+                continue
             if ep == args.epochs - 1 or (ep + 1) % 3 == 0:
-                pq_v, pv_v, _pr, idx_v = predict(model, va_loader, device)
-                reg_v = reg_all[idx_v]
-                q_v = pq_v[np.arange(len(va)), reg_v]
-                vv = ~np.isnan(yv_all) & va_real
-                q_auc = -1.0
-                if vv.sum() and len(np.unique(yv_all[vv])) > 1:
-                    q_auc = float(roc_auc_score(yv_all[vv], q_v[vv]))
-                # macro AUC по типам нарушений
-                v_aucs = []
-                for j, name in enumerate(C.VIOLATIONS):
-                    yy = viol_y[name]
-                    val = ~np.isnan(yy) & va_real
-                    if val.sum() and len(np.unique(yy[val])) > 1:
-                        v_aucs.append(roc_auc_score(yy[val], pv_v[val, j]))
-                v_auc = float(np.mean(v_aucs)) if v_aucs else -1.0
-                parts = [x for x in (q_auc, v_auc) if x >= 0]
-                score = float(np.mean(parts)) if parts else -1.0
+                score = _inner_score(model, inner_loader, device)
                 if score > best_score:
-                    best_score = score
-                    best_ep = ep
-                    best_state = {kk: vv2.detach().clone()
-                                  for kk, vv2 in model.state_dict().items()}
+                    best_score, best_ep = score, ep
+                    best_state = {kk: vv.detach().clone()
+                                  for kk, vv in model.state_dict().items()}
         if best_state is not None:
             model.load_state_dict(best_state)
 
-        pq, pv, pr, idx = predict(model, va_loader, device)
+        pq, pv, pr, idx = predict(model, va_loader, device, tta=tta)
         gidx = va_idx[idx]          # локальные индексы -> глобальные
         reg = va["region_idx"].values
         q_fold = pq[np.arange(len(va)), reg]        # вероятность качества своей области
@@ -340,13 +400,16 @@ def train_full(df: pd.DataFrame, args):
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr,
                             weight_decay=C.WEIGHT_DECAY)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
+    sampler = ds.make_balanced_sampler(labeled) if C.BALANCED_SAMPLER else None
     loader = DataLoader(ds.DXADataset(labeled, train=True, size=args.size),
-                        batch_size=args.batch, shuffle=True,
-                        num_workers=C.NUM_WORKERS)
+                        batch_size=args.batch, shuffle=sampler is None,
+                        sampler=sampler, num_workers=C.NUM_WORKERS)
     pos_w_q = compute_pos_weight_by_region(labeled, "quality")
     pos_w_v = compute_pos_weight_viol(labeled)
+    scaler = torch.cuda.amp.GradScaler(enabled=(device == "cuda" and C.USE_AMP))
     for ep in range(args.epochs):
-        loss = train_epoch(model, loader, opt, device, pos_w_q, pos_w_v)
+        loss = train_epoch(model, loader, opt, device, pos_w_q, pos_w_v,
+                           scaler=scaler, loss_mode=C.QUALITY_LOSS)
         sched.step()
     torch.save(model.state_dict(), C.BEST_WEIGHTS)
     print(f"[full] сохранено: {C.BEST_WEIGHTS} (loss={loss:.4f})")
@@ -363,16 +426,25 @@ def main():
     ap.add_argument("--batch", type=int, default=C.BATCH_SIZE)
     ap.add_argument("--size", type=int, default=C.IMAGE_SIZE)
     ap.add_argument("--lr", type=float, default=C.LR)
+    ap.add_argument("--backbone", default=C.BACKBONE)
+    ap.add_argument("--no-tta", action="store_true", help="отключить TTA при оценке")
+    ap.add_argument("--no-select-epoch", action="store_true",
+                    help="не выбирать эпоху (обучить фиксированное число эпох)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
+    args.tta = not args.no_tta
+    args.select_epoch = not args.no_select_epoch
 
     torch.set_num_threads(max(1, os.cpu_count() or 1))
     os.makedirs(C.ARTIFACTS_DIR, exist_ok=True)
+    if args.backbone != C.BACKBONE:
+        C.BACKBONE = args.backbone
     if args.rebuild_manifest or not os.path.isfile(args.manifest):
         df = ds.build_manifest(args.dataset_root, args.manifest)
     else:
         df = ds.load_manifest(args.manifest)
-    print(f"[data] всего изображений: {len(df)}  устройство: {args.device}")
+    print(f"[data] всего изображений: {len(df)}  устройство: {args.device}  "
+          f"бэкбон: {C.BACKBONE}  TTA: {args.tta}")
 
     t0 = time.time()
     metrics, oof_q, oof_v, oof_r = run_cv(df, args)

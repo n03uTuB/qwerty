@@ -4,3 +4,20 @@ __pycache__/
 .pytest_cache/
 data/
 out/
+
+# --- веса моделей и кэши изображений: слишком большие для git ---
+dxa_qc/artifacts/*.pt
+dxa_qc/artifacts/image_cache/
+dxa_qc/outputs/
+
+# --- производные артефакты (пересоздаются скриптами; содержат локальные пути) ---
+dxa_qc/artifacts/manifest.csv
+dxa_qc/artifacts/features.csv
+dxa_qc/artifacts/*.npy
+dxa_qc/artifacts/stacker.joblib
+
+# --- приватные данные организатора (разметка, выгрузки, архивы) ---
+_dsroot/
+*.zip
+*.docx
+*.xlsx

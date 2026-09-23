@@ -75,6 +75,19 @@ def main() -> int:
 
     images = load_dataset(args.dataset)
     generated = synth_real.build(images, np.random.default_rng(args.seed), per_type=args.per_type)
+
+    # Один и тот же источник может попасться несколько раз с тем же преобразованием и
+    # тем же углом (image_uid совпадает) — это точные дубликаты. Убираем их: иначе
+    # снимок дублируется в обучении и искажает баланс.
+    unique, seen = [], set()
+    for image in generated:
+        if image.image_uid in seen:
+            continue
+        seen.add(image.image_uid)
+        unique.append(image)
+    if len(unique) != len(generated):
+        print(f"[синтетика] отброшено точных дубликатов: {len(generated) - len(unique)}")
+    generated = unique
     print(synth_real.summary(generated))
 
     rows = []
@@ -95,6 +108,8 @@ def main() -> int:
             "cols": int(image.array.shape[1]),
             "spacing_x": image.spacing[0],
             "spacing_y": image.spacing[1],
+            # синтетика не «переснята»: одна копия
+            "copies": 1,
             "quality": float(image.quality),
             "synthetic": True,
         }

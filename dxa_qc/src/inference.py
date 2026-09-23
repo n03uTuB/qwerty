@@ -60,11 +60,13 @@ class QualityController:
                  violation_threshold: float = DEFAULT_VIOLATION_THRESHOLD,
                  size: int = C.IMAGE_SIZE,
                  quality_thresholds: Optional[Dict[str, float]] = None,
-                 violation_thresholds: Optional[Dict[str, float]] = None):
+                 violation_thresholds: Optional[Dict[str, float]] = None,
+                 tta: bool = C.USE_TTA):
         if weights is None:
             weights = [C.BEST_WEIGHTS]
         self.device = device
         self.size = size
+        self.tta = tta
         self.quality_threshold = quality_threshold
         self.violation_threshold = violation_threshold
         # пороги по областям/критериям (переопределяют скалярные)
@@ -99,7 +101,7 @@ class QualityController:
                 self.stackers = {}
 
     @torch.no_grad()
-    def predict_array(self, arr: np.ndarray, spacing=None) -> Dict:
+    def predict_array(self, arr: np.ndarray, spacing=None, copies: float = 1.0) -> Dict:
         img = dicom_io.preprocess(arr, self.size)
         x = torch.from_numpy(img).unsqueeze(0).unsqueeze(0).float().to(self.device)
 
@@ -108,10 +110,10 @@ class QualityController:
 
         q_probs, v_probs, r_probs = [], [], []
         for m in self.models:
-            out = m(x)
-            q_probs.append(torch.sigmoid(out["quality"]).cpu().numpy()[0])
-            v_probs.append(torch.sigmoid(out["violation"]).cpu().numpy()[0])
-            r_probs.append(torch.softmax(out["region"], dim=1).cpu().numpy()[0])
+            q, v, r = model_lib.predict_probs(m, x, tta=self.tta)
+            q_probs.append(q.cpu().numpy()[0])
+            v_probs.append(v.cpu().numpy()[0])
+            r_probs.append(r.cpu().numpy()[0])
         q = np.mean(q_probs, axis=0)
         v = np.mean(v_probs, axis=0)
         r = np.mean(r_probs, axis=0)
@@ -120,7 +122,8 @@ class QualityController:
         feat = None
         if self.stackers:
             # масштаб снимка обязателен: от него зависят углы (см. dicom_io.pixel_spacing)
-            feat = self._feature_fn(np.asarray(arr), spacing or C.PIXEL_SPACING_MM)
+            feat = self._feature_fn(np.asarray(arr), spacing or C.PIXEL_SPACING_MM,
+                                    region=region, copies=copies)
 
         q_region = float(q[ridx])
         if feat is not None and "quality" in self.stackers:
@@ -180,6 +183,7 @@ def process_study(controller: QualityController, study_uid: str, study_path: str
     try:
         files = dicom_io.find_dicom_files(study_path)
         uniq = dicom_io.dedupe_unique_images(files)
+        copies_map = dicom_io.study_copies(files)
     except Exception:
         return [dict(
             path_to_study=study_path, study_uid=study_uid, image_uid="",
@@ -188,11 +192,26 @@ def process_study(controller: QualityController, study_uid: str, study_path: str
             error=traceback.format_exc(limit=1),
         )]
 
+    # Исследование есть, но ни один файл не читается (битые/пустые DICOM): по ТЗ
+    # такое исследование должно попасть в отчёт со статусом Failure, а батч — продолжиться.
+    if not uniq:
+        return [dict(
+            path_to_study=study_path, study_uid=study_uid, image_uid="",
+            anatomical_region="", quality_class=-1, violation_type="",
+            processing_status="Failure", time_of_processing=round(time.time() - t0, 3),
+            error="не найдено читаемых DICOM-изображений",
+        )]
+
     for path, ds, arr in uniq:
         ts = time.time()
         image_uid = str(getattr(ds, "SOPInstanceUID", "") or "")
         try:
-            res = controller.predict_array(np.asarray(arr), dicom_io.pixel_spacing(ds, arr))
+            import hashlib as _hl
+            px_hash = _hl.md5(np.ascontiguousarray(arr).tobytes()).hexdigest()
+            copies = float(copies_map.get(px_hash, 1))
+            res = controller.predict_array(np.asarray(arr),
+                                           dicom_io.pixel_spacing(ds, arr),
+                                           copies=copies)
             status = "Success"
             viol_text = violation_text_ru(res["violation_names"])
             row = dict(
@@ -266,7 +285,8 @@ def build_controller_from_args(weights: Optional[List[str]] = None,
                                device: str = "cpu",
                                quality_threshold: Optional[float] = None,
                                violation_threshold: Optional[float] = None,
-                               size: int = C.IMAGE_SIZE) -> QualityController:
+                               size: int = C.IMAGE_SIZE,
+                               tta: bool = C.USE_TTA) -> QualityController:
     if weights is None:
         # ансамбль: финальная модель + все фолды, если есть
         weights = []
@@ -293,4 +313,5 @@ def build_controller_from_args(weights: Optional[List[str]] = None,
     return QualityController(weights, device=device,
                              quality_threshold=quality_threshold,
                              violation_threshold=violation_threshold, size=size,
-                             quality_thresholds=qbr, violation_thresholds=vth)
+                             quality_thresholds=qbr, violation_thresholds=vth,
+                             tta=tta)

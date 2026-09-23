@@ -13,7 +13,7 @@ import pandas as pd
 
 from . import config as C
 from . import dataset as ds
-from .train import best_threshold
+from .train import best_threshold, pick_threshold
 
 
 def main():
@@ -31,6 +31,7 @@ def main():
             oof_v = sv
             source = "stack"
     print("[calibrate] источник OOF-вероятностей (нарушения):", source)
+    print("[calibrate] режим порога:", getattr(C, "THRESHOLD_MODE", "prior"))
 
     # пороги калибруем только по реальным снимкам: на синтетике доля нарушений искусственная
     real = ds.real_mask(manifest)
@@ -43,7 +44,7 @@ def main():
     y = manifest["quality"].values.astype(float)
     valid = ~np.isnan(y) & ~np.isnan(oof_q) & real
     if valid.sum() and len(np.unique(y[valid])) > 1:
-        thr, f1 = best_threshold(y[valid], oof_q[valid])
+        thr, f1 = pick_threshold(y[valid], oof_q[valid])
         thresholds["quality"] = dict(threshold=float(thr), f1=float(f1),
                                      n=int(valid.sum()))
     else:
@@ -57,7 +58,7 @@ def main():
         pr = oof_q[m]
         vr = ~np.isnan(yr) & ~np.isnan(pr)
         if vr.sum() and len(np.unique(yr[vr])) > 1:
-            t, f = best_threshold(yr[vr], pr[vr])
+            t, f = pick_threshold(yr[vr], pr[vr])
             qbr[region] = dict(threshold=float(t), f1=float(f),
                                n=int(vr.sum()), pos=int((yr[vr] > 0.5).sum()))
         else:
@@ -74,7 +75,7 @@ def main():
         yv = manifest[col].values.astype(float)
         val = ~np.isnan(yv) & ~np.isnan(oof_v[:, i]) & real
         if val.sum() and len(np.unique(yv[val])) > 1:
-            thr, f1 = best_threshold(yv[val], oof_v[val, i])
+            thr, f1 = pick_threshold(yv[val], oof_v[val, i])
             vth[name] = dict(threshold=float(thr), f1=float(f1),
                              n=int(val.sum()), pos=int((yv[val] > 0.5).sum()))
         else:

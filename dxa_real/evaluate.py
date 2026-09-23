@@ -130,7 +130,14 @@ def cross_validate(X: np.ndarray, y: np.ndarray, groups: np.ndarray, *, train_ma
                 pass
             threshold = _best_threshold(np.concatenate(inner_y), np.concatenate(inner_probs)) \
                 if inner_probs else 0.5
-            preds[va] += (model.predict_proba(X[va])[:, 1] >= threshold).astype(float)
+            fold_pred = (model.predict_proba(X[va])[:, 1] >= threshold).astype(float)
+
+            if threshold_mode == "blend":
+                # среднее двух решений: устойчивость вложенного порога + полнота
+                # порога по ожидаемой доле нарушений. Не подбор по критерию.
+                prior_pred = (fold_probs >= _prior_threshold(y[tr], fold_probs)).astype(float)
+                fold_pred = 0.5 * (fold_pred + prior_pred)
+            preds[va] += fold_pred
             counts[va] += 1
 
     valid = counts > 0

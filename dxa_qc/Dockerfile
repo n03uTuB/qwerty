@@ -5,6 +5,10 @@
 # Сборка GPU:  docker build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124 \
 #                          --build-arg BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 \
 #                          -t dxa-qc:gpu .
+#
+# Целевая конфигурация организатора — 2 × NVIDIA H200 (141 GB VRAM, Hopper).
+# H200 требует CUDA 12.x (cu124 подходит) и NVIDIA Container Toolkit на хосте
+# (см. docker-compose.yml, секция deploy.resources.reservations.devices).
 FROM python:3.10-slim AS base
 
 ARG BASE_IMAGE=python:3.10-slim
@@ -14,9 +18,12 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     OMP_NUM_THREADS=8 \
-    MKL_NUM_THREADS=8
+    MKL_NUM_THREADS=8 \
+    # для NVIDIA Container Toolkit (проброс GPU в контейнер)
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-# системные библиотеки для opencv/pydicom
+# системные библиотеки для opencv/pydicom/albumentations
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libglib2.0-0 libgl1 libsm6 libxext6 libxrender1 \
         build-essential curl \

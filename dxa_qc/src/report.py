@@ -16,7 +16,7 @@ from sklearn.metrics import (average_precision_score, f1_score,
 
 from . import config as C
 from . import dataset as ds
-from .train import best_threshold, bootstrap_ci
+from .train import best_threshold, bootstrap_ci, pick_threshold
 
 
 def quality_block(y, p):
@@ -26,7 +26,7 @@ def quality_block(y, p):
     y, p = y[valid], p[valid]
     if len(y) == 0 or len(np.unique(y)) < 2:
         return dict(n=int(len(y)), f1=None)
-    thr, f1 = best_threshold(y, p)
+    thr, f1 = pick_threshold(y, p)
     pred = (p >= thr).astype(int)
     tp = int(((y == 1) & (pred == 1)).sum())
     fp = int(((y == 0) & (pred == 1)).sum())

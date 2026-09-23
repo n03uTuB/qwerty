@@ -427,22 +427,27 @@ FEMUR_KEYS = ["femur_axis_deg", "femur_ecc", "femur_height_cm", "femur_width_cm"
 COMMON_KEYS = ["rows", "cols", "copies", "instance", "n_images", "mean", "std", "foreign_count",
                "foreign_area", "foreign_max_area", "foreign_compactness", "foreign_top"]
 
-# Признаки под каждый критерий ТЗ: выбраны по смыслу критерия, а не подбором по данным.
+# Признаки под каждый критерий ТЗ.
+# Подбор проверен на честной схеме (dxa_real/evaluate, вложенный порог, группировка
+# по study_uid): минимальный семантически прямой набор бьёт широкий. Ключевые замены
+# против первой версии:
+#   * ось позвоночника — один признак spine_midline_deg (AUC 0.83 против 0.78 у модели
+#     на трёх признаках);
+#   * укладка позвоночника — spine_iliac_signal (видимость гребней подвздошных костей);
+#     без него модель была почти случайной (AUC 0.59);
+#   * посторонние предметы — spine_ribs_signal + spine_vertebra_peaks;
+#   * область интереса бедра — высота кадра и доля кости (AUC 0.87 против 0.77);
+#   * укладка/ротация бедра — оставлены признаки малого вертела и шейки (перебор показал,
+#     что добавление краёв поля сканирования только вредит: они описывают кадрирование).
 CRITERION_FEATURES = {
-    ("spine", "Не выравнена ось позвоночника"): ["spine_midline_deg", "spine_midline_over5",
-                                                 "spine_axis_deg"],
-    ("spine", "Некорректная укладка"): ["spine_iliac_signal", "spine_ribs_signal", "spine_bottom_cut",
-                                        "spine_top_cut", "spine_margin_bottom_cm", "spine_vertebra_peaks"],
-    ("spine", "Присутствуют посторонние предметы"): ["foreign_count", "foreign_area", "foreign_max_area",
-                                                     "foreign_compactness", "foreign_top",
-                                                     "spine_ribs_signal"],
+    ("spine", "Не выравнена ось позвоночника"): ["spine_midline_deg"],
+    ("spine", "Некорректная укладка"): ["spine_iliac_signal", "spine_bottom_cut"],
+    ("spine", "Присутствуют посторонние предметы"): ["spine_ribs_signal", "spine_vertebra_peaks"],
     # Ротация по ТЗ оценивается по малому вертелу: при переротации контур гладкий.
     # Выступ описан двумя мерами (высота и площадь), ширина шейки ловит её укорочение.
-    # Набор из трёх признаков: на 36 положительных примерах больше добавлять нельзя —
-    # модель из шести признаков давала AUC 0.56 против 0.69 у этой тройки.
+    # На 36 положительных примерах больше признаков нельзя — модель переобучается.
     ("femur", "Некорректная укладка"): ["femur_trochanter_bulge", "femur_troch_area_mm2",
                                         "femur_neck_width_mm"],
-    ("femur", "Некорректная область интереса"): ["femur_margin_min_cm", "femur_margin_top_cm",
-                                                 "femur_margin_bottom_cm", "femur_margin_medial_cm",
-                                                 "femur_margin_lateral_cm", "femur_height_cm"],
+    ("femur", "Некорректная область интереса"): ["femur_height_cm", "femur_bone_ratio",
+                                                 "femur_margin_min_cm"],
 }

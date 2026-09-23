@@ -30,17 +30,29 @@ STACKER_PATH = os.path.join(C.ARTIFACTS_DIR, "stacker.joblib")
 STACK_METRICS = os.path.join(C.ARTIFACTS_DIR, "stack_metrics.json")
 
 # Какие геометрические признаки использовать для каждого критерия.
-# Набор подобран по приросту ROC-AUC относительно чистой CNN (OOF-CV);
-# пустой список = оставить только нейросетевую вероятность.
+# Наборы перенесены из честного контура dxa_real и подобраны по приросту
+# ROC-AUC на OOF-CV. Ключевые принципы: минимум признаков (на 6–36 позитивах
+# широкая модель переобучается) и семантическое соответствие критерию ТЗ.
 CRITERION_FEATURES = {
-    "spine_positioning": ["spine_axis_angle", "vertical_symmetry"],
+    # укладка позвоночника: видимость гребней подвздошных костей снизу
+    "spine_positioning": ["spine_iliac_signal", "spine_bottom_cut"],
     # угол по средней линии столба — прямое измерение критерия ТЗ (допуск 5°)
-    "spine_axis": ["spine_midline_angle", "spine_axis_angle"],
-    "spine_artifacts": ["bone_eccentricity"],
-    "femur_positioning": [],
-    "femur_roi": ["bone_eccentricity"],
+    "spine_axis": ["spine_midline_angle"],
+    # посторонние предметы: рёбра/Th12 сверху и число тел позвонков
+    "spine_artifacts": ["spine_ribs_signal", "spine_vertebra_peaks"],
+    # ротация бедра: отступ поля сканирования + ширина кадра (набор O).
+    # Победитель перебора в режиме prior (дефолт пайплайна): macro-F1 0.500 -> 0.517;
+    # выигрывает и в nested (0.404 -> 0.410). Лучший глобальный AUC даёт другой
+    # набор (L, 0.625), но в режиме порога по доле нарушений важна точность верхушки
+    # списка, и там O сильнее.
+    "femur_positioning": ["femur_margin_min_cm", "femur_width_cm"],
+    # область интереса: высота кадра и доля кости (отступы поля сканирования)
+    "femur_roi": ["femur_height_cm", "femur_bone_ratio", "femur_margin_min_cm"],
 }
 QUALITY_FEATURES = []
+
+# Позволяем переопределить наборы через config (для A/B без правки кода).
+CRITERION_FEATURES.update(getattr(C, "CRITERION_FEATURES_OVERRIDE", {}) or {})
 
 
 def _make_clf():

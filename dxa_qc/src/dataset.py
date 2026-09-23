@@ -105,6 +105,8 @@ def build_manifest(dataset_root: str, manifest_csv: str = C.MANIFEST_CSV,
         if not files:
             continue
         uniq = dicom_io.dedupe_unique_images(files)
+        regions = dicom_io.detect_region_study(uniq)
+        copies = dicom_io.study_copies(files)
         lab = labels.get(study_uid)
 
         # валидация числа областей
@@ -116,8 +118,7 @@ def build_manifest(dataset_root: str, manifest_csv: str = C.MANIFEST_CSV,
             if n_groups != len(uniq):
                 n_mismatch += 1
 
-        for path, ds, arr in uniq:
-            region = dicom_io.detect_region(arr)
+        for (path, ds, arr), region in zip(uniq, regions):
             image_uid = str(getattr(ds, "SOPInstanceUID", "") or "")
             if not image_uid:
                 image_uid = hashlib.md5(path.encode("utf-8")).hexdigest()
@@ -127,13 +128,15 @@ def build_manifest(dataset_root: str, manifest_csv: str = C.MANIFEST_CSV,
             if lab is not None:
                 quality, viol, mask = _quality_row(region, lab)
 
-            # кэш изображения в PNG (PIL корректно работает с кириллицей)
+            # кэш изображения в PNG (PIL корректно работает с кириллицей).
+            # to_display_uint8 применяет modality/VOI LUT — единый конвейер с инференсом.
             h = hashlib.md5(image_uid.encode("utf-8")).hexdigest()
             cache_path = os.path.join(cache_dir, h + ".png")
             if not os.path.isfile(cache_path):
-                Image.fromarray(dicom_io.normalize_uint8(arr)).save(cache_path)
+                Image.fromarray(dicom_io.to_display_uint8(ds, arr)).save(cache_path)
 
             spacing_x, spacing_y = dicom_io.pixel_spacing(ds, arr)
+            px_hash = hashlib.md5(np.ascontiguousarray(arr).tobytes()).hexdigest()
             row = dict(
                 study_uid=study_uid,
                 image_uid=image_uid,
@@ -146,6 +149,8 @@ def build_manifest(dataset_root: str, manifest_csv: str = C.MANIFEST_CSV,
                 # реальный масштаб снимка из Exposed Area — нужен для углов и сантиметров
                 spacing_x=spacing_x,
                 spacing_y=spacing_y,
+                # число копий этого изображения в исследовании (признак пересъёмки)
+                copies=int(copies.get(px_hash, 1)),
                 quality=quality,
                 # синтетические строки (см. scripts/make_synthetic_for_dxa_qc.py) идут
                 # только в обучение и исключаются из метрик, порогов и отчёта
@@ -173,17 +178,84 @@ def build_manifest(dataset_root: str, manifest_csv: str = C.MANIFEST_CSV,
 
 
 # --------------------------------------------------------------------------- #
+# Аугментации и балансировка классов
+# --------------------------------------------------------------------------- #
+def build_train_transform(size: int = C.IMAGE_SIZE):
+    """Albumentations-конвейер безопасных аугментаций (или None при отсутствии пакета).
+
+    Ограничения по смыслу критериев ТЗ:
+      * поворот <= 3° — иначе можно ложно имитировать нарушение оси (> 5°);
+      * нет отражений по горизонтали — они меняют сторону бедра (лево/право);
+      * нет сильной эластики/грид-дисторшна — они имитируют нарушение укладки;
+      * не вклеиваем «металл»: по находкам это вредит (настоящие наложения выглядят иначе).
+    """
+    try:
+        import albumentations as A
+        import cv2
+
+        # BORDER_REFLECT_101 вместо чёрных углов: чёрные клинья от поворота выглядят
+        # как «посторонний предмет»/обрезка и ложно имитировали бы нарушение.
+        return A.Compose([
+            A.Rotate(limit=3.0, border_mode=cv2.BORDER_REFLECT_101, p=0.5),
+            A.Affine(scale=(0.95, 1.05), translate_percent=(-0.05, 0.05),
+                     border_mode=cv2.BORDER_REFLECT_101, p=0.4),
+            A.RandomBrightnessContrast(brightness_limit=0.15, contrast_limit=0.15, p=0.5),
+        ])
+    except Exception:
+        return None
+
+
+def make_balanced_sampler(df: pd.DataFrame, seed: int = C.SEED):
+    """WeightedRandomSampler, выравнивающий классы качества и редкие нарушения.
+
+    Вес строки = максимум из отношений «негативы/позитивы» по её меткам. Помогает
+    при 6–36 положительных примерах, не меняя лосс (комбинируется с pos_weight).
+    """
+    from torch.utils.data import WeightedRandomSampler
+
+    n = len(df)
+    if n == 0:
+        return None
+    weights = np.ones(n, dtype=np.float64)
+
+    def _bump(col: str):
+        if col not in df:
+            return
+        vals = pd.to_numeric(df[col], errors="coerce").values
+        known = ~np.isnan(vals)
+        if known.sum() == 0:
+            return
+        pos = float((vals[known] > 0.5).sum())
+        neg = float(known.sum() - pos)
+        if pos > 0:
+            ratio = neg / pos
+            weights[known & (vals > 0.5)] *= max(ratio, 1.0)
+
+    _bump("quality")
+    for name in C.VIOLATIONS:
+        _bump("viol_" + name)
+    weights = np.clip(weights, 1.0, None)
+    g = torch.Generator()
+    g.manual_seed(seed)
+    return WeightedRandomSampler(weights=torch.as_tensor(weights, dtype=torch.double),
+                                 num_samples=n, replacement=True, generator=g)
+
+
+# --------------------------------------------------------------------------- #
 # Dataset
 # --------------------------------------------------------------------------- #
 class DXADataset(Dataset):
     """Датасет изображений DXA с мультизадачными метками."""
 
     def __init__(self, df: pd.DataFrame, train: bool = False,
-                 size: int = C.IMAGE_SIZE, cache_in_memory: bool = True):
+                 size: int = C.IMAGE_SIZE, cache_in_memory: bool = True,
+                 use_clahe: Optional[bool] = None):
         self.df = df.reset_index(drop=True)
         self.train = train
         self.size = size
         self.cache_in_memory = cache_in_memory
+        self.use_clahe = C.USE_CLAHE if use_clahe is None else use_clahe
+        self._transform = build_train_transform(size) if train else None
         self._cache = None
         if cache_in_memory:
             self._cache = [self._load(p) for p in self.df["cache_path"].tolist()]
@@ -195,7 +267,10 @@ class DXADataset(Dataset):
         from PIL import Image
 
         img = np.asarray(Image.open(path).convert("L"))
-        return dicom_io.preprocess(img, self.size)
+        # кэш PNG уже прошёл modality/VOI LUT (to_display_uint8) -> is_display=True,
+        # чтобы не нормировать повторно; CLAHE применяется единообразно с инференсом.
+        return dicom_io.preprocess(img, self.size, use_clahe=self.use_clahe,
+                                   is_display=True)
 
     def __getitem__(self, idx: int):
         row = self.df.iloc[idx]
@@ -230,6 +305,12 @@ class DXADataset(Dataset):
 
     # -- аугментации ------------------------------------------------------- #
     def _augment(self, img: np.ndarray) -> np.ndarray:
+        # 1) основной путь — Albumentations (если установлен)
+        if self._transform is not None:
+            out = self._transform(image=img)["image"]
+            return np.ascontiguousarray(out, dtype=np.float32)
+
+        # 2) fallback — OpenCV (без пакета albumentations)
         import cv2
 
         h, w = img.shape
@@ -241,8 +322,9 @@ class DXADataset(Dataset):
         M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, scale)
         M[0, 2] += tx
         M[1, 2] += ty
+        # BORDER_REFLECT_101: без чёрных углов, которые имитируют артефакты
         img = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR,
-                             borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
+                             borderMode=cv2.BORDER_REFLECT_101)
         # яркость/контраст
         img = np.clip(img * np.random.uniform(0.85, 1.15) + np.random.uniform(-0.05, 0.05), 0, 1)
         # шум
