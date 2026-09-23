@@ -60,15 +60,17 @@ _INTERNAL_TO_LABEL = {
 }
 
 
-def output_label_matrix(df, prob_v, thresholds):
+def output_label_matrix(df, prob_v, thresholds, mask=None):
     """Матрицы истина/предсказание (n×4) по закрытому списку организатора.
 
     Для каждой строки учитываются только критерии её анатомической области.
+    ``mask`` ограничивает оценку (синтетику в метрику не берём).
     """
     from sklearn.metrics import f1_score
 
     labels = C.VIOLATION_LABELS_UNIQUE
     n = len(df)
+    keep = np.ones(n, dtype=bool) if mask is None else np.asarray(mask, dtype=bool)
     y_true = np.zeros((n, len(labels)), dtype=int)
     y_pred = np.zeros((n, len(labels)), dtype=int)
     for i in range(n):
@@ -82,6 +84,7 @@ def output_label_matrix(df, prob_v, thresholds):
             pv = prob_v[i, j]
             if not np.isnan(pv) and pv >= thresholds.get(name, 0.5):
                 y_pred[i, k] = 1
+    y_true, y_pred = y_true[keep], y_pred[keep]
     per_label = {}
     f1s = []
     for k, lab in enumerate(labels):
@@ -93,6 +96,22 @@ def output_label_matrix(df, prob_v, thresholds):
         f1s.append(f)
     macro = float(np.mean(f1s)) if f1s else None
     return per_label, macro
+
+
+def output_quality_class(df, prob_v, thresholds, mask=None):
+    """quality_class по правилу пайплайна: ИЛИ(сработавших критериев области).
+
+    Возвращает массив по всем строкам df (маскирование — на стороне вызова).
+    """
+    n = len(df)
+    q = np.zeros(n, dtype=int)
+    for i in range(n):
+        for name in C.REGION_CRITERIA[df["region"].values[i]]:
+            pv = prob_v[i, C.VIOLATION_IDX[name]]
+            if not np.isnan(pv) and pv >= thresholds.get(name, 0.5):
+                q[i] = 1
+                break
+    return q
 
 
 def main():
@@ -141,6 +160,8 @@ def main():
     L = []
     L.append("# Метрики DXA-QC (кросс-валидация, GroupKFold по study_uid)\n")
     L.append("## Классификация качества (общая)\n")
+    L.append("_Базовая оценка CNN-качества (для сравнения). Итоговое решение: "
+             "`quality_class = ИЛИ(сработавших критериев)`._\n")
     o = out["overall"]
     L.append("| Метрика | Значение | 95% ДИ |")
     L.append("|---|---|---|")
@@ -185,12 +206,42 @@ def main():
     vth_rep = {n: v["threshold"] for n, v in
                _thr_all.get("violations", {}).items()
                if v.get("threshold") is not None}
-    per_label, macro = output_label_matrix(df, oof_v, vth_rep)
+    per_label, macro = output_label_matrix(df, oof_v, vth_rep, mask=real)
     out["violations_output_labels"] = per_label
     out["violation_macro_f1_output"] = macro
+
+    # ---- метрики ИТОГОВОГО решения пайплайна: quality_class = ИЛИ(критериев) ----
+    # Вероятность качества — максимум по критериям области (как в inference).
+    q_prob = np.full(len(df), np.nan)
+    for i, region in enumerate(df["region"].values):
+        vals = [float(oof_v[i, C.VIOLATION_IDX[nm]]) for nm in C.REGION_CRITERIA[region]]
+        vals = [v for v in vals if not np.isnan(v)]
+        q_prob[i] = max(vals) if vals else float(oof_q[i])
+    from sklearn.metrics import balanced_accuracy_score, f1_score as _f1, roc_auc_score
+    yq = df["quality"].values.astype(float)
+    known = ~np.isnan(yq) & real
+    yqb = np.nan_to_num(yq, nan=0.0).astype(int)[known]
+    pred_q = output_quality_class(df, oof_v, vth_rep, mask=real)[known]
+    pq = q_prob[known]
+    ok = ~np.isnan(pq)
+    out["decision"] = dict(
+        macro_f1_output=macro,
+        quality_balanced_acc=float(balanced_accuracy_score(yqb, pred_q)),
+        quality_macro_f1=float(_f1(yqb, pred_q, average="macro", zero_division=0)),
+        quality_roc_auc=float(roc_auc_score(yqb[ok], pq[ok])) if len(np.unique(yqb[ok])) > 1 else None,
+    )
     with open(os.path.join(C.ARTIFACTS_DIR, "metrics_by_region.json"), "w",
               encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2, default=float)
+    L.append("\n## Итоговое решение (quality_class = ИЛИ(критериев))\n")
+    L.append("| Метрика | Значение |")
+    L.append("|---|---|")
+    L.append("| Macro-F1 (4 метки организатора) | %.3f |" % (macro or 0.0))
+    L.append("| Balanced accuracy quality_class | %.3f |" % out["decision"]["quality_balanced_acc"])
+    L.append("| Macro-F1 quality_class | %.3f |" % out["decision"]["quality_macro_f1"])
+    L.append("| ROC-AUC quality_class (max по критериям) | %.3f |" %
+             (out["decision"]["quality_roc_auc"] or 0.0))
+    L.append("")
     L.append("\n## Типы нарушений в формате организатора (закрытый список)\n")
     L.append("| Значение violation_type | F1 |")
     L.append("|---|---|")
@@ -222,7 +273,8 @@ def main():
             _row(name, name)
         L.append("")
         L.append("Геометрические признаки применяются к критериям нарушений; "
-                 "класс качества оценивается по нейросети.\n")
+                 "класс качества = ИЛИ(сработавших критериев) — гейт по "
+                 "нейросети снят (см. docs/metrics_improvement.md).\n")
 
     path = os.path.join(C.ARTIFACTS_DIR, "report.md")
     with open(path, "w", encoding="utf-8") as f:
@@ -234,8 +286,6 @@ def main():
     from . import inference as _inf
 
     thr = _inf.load_thresholds()
-    qbr = {r: v["threshold"] for r, v in thr.get("quality_by_region", {}).items()
-           if v.get("threshold") is not None}
     vth = {n: v["threshold"] for n, v in thr.get("violations", {}).items()
            if v.get("threshold") is not None}
     oof_rows = []
@@ -244,25 +294,26 @@ def main():
         qp = oof_q[i]
         if np.isnan(qp):
             continue
-        qthr = qbr.get(region, thr.get("quality", {}).get("threshold", 0.5))
-        qclass = int(qp >= qthr)
         fired = []
-        for name in C.REGION_CRITERIA[region]:
+        crit = C.REGION_CRITERIA[region]
+        max_viol = 0.0
+        for name in crit:
             j = C.VIOLATION_IDX[name]
-            if not np.isnan(oof_v[i, j]) and oof_v[i, j] >= vth.get(name, 0.5):
-                fired.append(name)
-        if qclass == 0:
-            fired = []
-        elif not fired:
-            crit = C.REGION_CRITERIA[region]
-            fired = [max(crit, key=lambda nm: np.nan_to_num(oof_v[i, C.VIOLATION_IDX[nm]]))]
+            p = oof_v[i, j]
+            if not np.isnan(p):
+                max_viol = max(max_viol, float(p))
+                if p >= vth.get(name, 0.5):
+                    fired.append(name)
+        # та же логика, что в inference.predict_array: quality_class = ИЛИ(критериев)
+        qclass = int(bool(fired))
+        qprob = max_viol if crit else float(qp)
         oof_rows.append(dict(
             path_to_study=row["source_path"], study_uid=row["study_uid"],
             image_uid=row["image_uid"],
             anatomical_region=_inf.region_label_ru(region),
             quality_class=qclass,
             violation_type=_inf.violation_text_ru(fired),
-            processing_status="Success", quality_prob=round(float(qp), 4),
+            processing_status="Success", quality_prob=round(qprob, 4),
             true_quality=row["quality"],
         ))
     oof_df = pd.DataFrame(oof_rows)

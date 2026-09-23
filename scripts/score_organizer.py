@@ -111,6 +111,20 @@ def _report(df, real, quality, fired, title):
     return float(np.mean(f1s))
 
 
+def _quality_prob(df, oof_q, oof_v):
+    """Вероятность качества ровно как в inference: max по критериям области.
+
+    Именно эта величина (а не «сырая» CNN-голова) идёт в quality_prob пайплайна.
+    """
+    prob = np.full(len(df), np.nan)
+    for i, region in enumerate(df["region"].values):
+        crit = C.REGION_CRITERIA[region]
+        vals = [oof_v[i, C.VIOLATION_IDX[n]] for n in crit]
+        vals = [float(v) for v in vals if not np.isnan(v)]
+        prob[i] = max(vals) if vals else float(oof_q[i])
+    return prob
+
+
 def main() -> None:
     manifest = ds.load_manifest(C.MANIFEST_CSV)
     real = np.asarray(ds.real_mask(manifest))
@@ -122,7 +136,7 @@ def main() -> None:
         sv = np.load(stack_path)
         if (~np.isnan(sv)).sum() > 0:
             oof_v = sv
-            print("[score] нарушения: гибридная шкала стекера")
+            print("[score] нарушения: шкала по источникам из config.CRITERION_SOURCES")
     with open(os.path.join(C.ARTIFACTS_DIR, "thresholds.json"), encoding="utf-8") as f:
         thresholds = json.load(f)
 
@@ -143,16 +157,18 @@ def main() -> None:
     real = np.asarray(ds.real_mask(df))
     q_gated, fired_gated = _decision(df, oof_q, oof_v, thresholds, gate_quality=True)
     q_ung, fired_ung = _decision(df, oof_q, oof_v, thresholds, gate_quality=False)
-    m_gated = _report(df, real, q_gated, fired_gated, "с гейтом по quality_class (как сейчас)")
+    m_gated = _report(df, real, q_gated, fired_gated, "с гейтом по quality_class (как было)")
     m_ung = _report(df, real, q_ung, fired_ung, "без гейта: quality_class = ИЛИ(нарушений)")
     print(f"\nИТОГ: macro-F1 с гейтом {m_gated:.3f}  |  без гейта {m_ung:.3f}")
 
     yq = df["quality"].values.astype(float)
     yq_known = ~np.isnan(yq) & real
     yq_bin = np.nan_to_num(yq, nan=0.0).astype(int)[yq_known]
-    prob = np.asarray(oof_q)[yq_known]
     if len(np.unique(yq_bin)) > 1:
-        print(f"quality_class ROC-AUC: {roc_auc_score(yq_bin, prob):.3f}")
+        p_cnn = np.asarray(oof_q)[yq_known]
+        p_final = _quality_prob(df, oof_q, oof_v)[yq_known]
+        print(f"quality_class ROC-AUC: CNN-голова {roc_auc_score(yq_bin, p_cnn):.3f}  |  "
+              f"max(критерии), как в пайплайне {roc_auc_score(yq_bin, p_final):.3f}")
 
 
 if __name__ == "__main__":

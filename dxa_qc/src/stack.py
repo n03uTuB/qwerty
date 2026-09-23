@@ -45,6 +45,8 @@ CRITERION_FEATURES = {
     # выигрывает и в nested (0.404 -> 0.410). Лучший глобальный AUC даёт другой
     # набор (L, 0.625), но в режиме порога по доле нарушений важна точность верхушки
     # списка, и там O сильнее.
+    # ВНИМАНИЕ: сейчас НЕ используется — для бедра источник "cnn" (config.CRITERION_SOURCES):
+    # в режиме prior чистая сеть даёт F1@prior 0.444 против 0.361 у гибрида.
     "femur_positioning": ["femur_margin_min_cm", "femur_width_cm"],
     # область интереса: высота кадра и доля кости (отступы поля сканирования)
     "femur_roi": ["femur_height_cm", "femur_bone_ratio", "femur_margin_min_cm"],
@@ -53,6 +55,16 @@ QUALITY_FEATURES = []
 
 # Позволяем переопределить наборы через config (для A/B без правки кода).
 CRITERION_FEATURES.update(getattr(C, "CRITERION_FEATURES_OVERRIDE", {}) or {})
+
+# Источник скора по критерию: "fused" (CNN + геометрия) или "cnn" (только сеть).
+# Обоснование — в config.CRITERION_SOURCES: в режиме prior гибрид помогает
+# только оси позвоночника, а на бедре проигрывает сети по precision@k.
+CRITERION_SOURCES = getattr(C, "CRITERION_SOURCES", {}) or {}
+
+
+def source_of(name: str) -> str:
+    """Источник скора для критерия (по умолчанию — гибрид, как было исторически)."""
+    return CRITERION_SOURCES.get(name, "fused")
 
 
 def _make_clf():
@@ -139,6 +151,17 @@ def main():
             continue
         idv = np.where(val)[0]
         cols = CRITERION_FEATURES.get(name, QUALITY_FEATURES)
+
+        if source_of(name) == "cnn" or not cols:
+            # Источник — чистая сеть. В режиме prior гибрид здесь проигрывает
+            # (см. config.CRITERION_SOURCES): оставляем CNN-шкалу, стекер не
+            # строим — inference.py уже откатывается на CNN для таких критериев.
+            stack_v[idv, j] = oof_v[idv, j]
+            results["violations"][name] = _score(yv[idv], oof_v[idv, j])
+            results["comparison"][name + "_cnn_only"] = results["violations"][name]
+            results["comparison"][name + "_fused"] = results["violations"][name]
+            continue
+
         Xv = data[cols].fillna(0).values if cols else np.zeros((n, 0), dtype=float)
         fused_v = _cv_fuse(Xv[idv], oof_v[idv, j], yv[idv].astype(int), groups[idv])
         cnn_v = _cv_cnn_only(oof_v[idv, j], yv[idv].astype(int), groups[idv])
@@ -160,8 +183,10 @@ def main():
         for j, name in enumerate(C.VIOLATIONS):
             yv = data["viol_" + name].values.astype(float)
             val = ~np.isnan(yv) & ~np.isnan(oof_v[:, j]) & real
+            cols = CRITERION_FEATURES.get(name, QUALITY_FEATURES)
+            if source_of(name) != "fused" or not cols:
+                continue
             if val.sum() and len(np.unique(yv[val])) > 1:
-                cols = CRITERION_FEATURES.get(name, QUALITY_FEATURES)
                 Xv = data[cols].fillna(0).values if cols else \
                     np.zeros((n, 0), dtype=float)
                 clf = _make_clf()

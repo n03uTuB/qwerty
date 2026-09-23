@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 data/
 out/
+*.log
 
 # --- веса моделей и кэши изображений: слишком большие для git ---
 dxa_qc/artifacts/*.pt

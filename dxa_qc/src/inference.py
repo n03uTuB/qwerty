@@ -141,9 +141,6 @@ class QualityController:
                 x = np.array([v[i]] + [feat[f] for f in st["features"]]).reshape(1, -1)
                 v_fused[i] = float(st["clf"].predict_proba(x)[0, 1])
 
-        q_thr = self.quality_thresholds.get(region, self.quality_threshold)
-        quality_class = int(q_region >= q_thr)
-
         # список сработавших нарушений только для критериев данной области
         crit = C.REGION_CRITERIA[region]
         fired = []
@@ -152,17 +149,20 @@ class QualityController:
             thr = self.violation_thresholds.get(name, self.violation_threshold)
             if v_fused[i] >= thr:
                 fired.append(name)
-        if quality_class == 0:
-            fired = []
-        elif not fired:
-            # согласованность: при классе «есть нарушение» должен быть указан
-            # хотя бы один критерий из закрытого списка — берём наиболее
-            # вероятный для данной области.
-            fired = [max(crit, key=lambda n: v_fused[C.VIOLATION_IDX[n]])]
+
+        # quality_class = ИЛИ(сработавших критериев). Гейт по CNN-качеству снят:
+        # в разметке организатора quality_class практически совпадает с ИЛИ
+        # критериев (246/249), а гейт лишь терял true positive (macro-F1
+        # организатора 0.302 -> 0.407, ROC-AUC качества 0.611 -> 0.707).
+        quality_class = int(bool(fired))
+        # вероятность качества — максимум по критериям области (вариант B,
+        # лучший по balanced accuracy / macro-F1 / ROC-AUC организатора)
+        quality_prob = (max(float(v_fused[C.VIOLATION_IDX[n]]) for n in crit)
+                        if crit else float(q_region))
 
         return dict(
             region=region,
-            quality_prob=float(q_region),
+            quality_prob=quality_prob,
             quality_class=quality_class,
             violation_probs={n: float(v_fused[C.VIOLATION_IDX[n]]) for n in C.VIOLATIONS},
             violation_names=fired,

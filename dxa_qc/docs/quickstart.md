@@ -24,14 +24,14 @@
 Открыть терминал и перейти в папку проекта:
 
 ```powershell
-cd C:\Users\Антон\Desktop\hak\dxa_qc
+cd <путь_к_проекту>\dxa_qc
 $env:PYTHONIOENCODING='utf-8'
 ```
 
 ### Прогнать папку со снимками (главная команда)
 
 ```powershell
-python -m src.predict --input "C:\Users\Антон\Desktop\hak\НД_для_обучения" --output outputs\results.csv
+python -m src.predict --input "<путь_к_данным>\НД_для_обучения" --output outputs\results.csv
 ```
 
 Появится:
@@ -177,7 +177,7 @@ python -m src.predict --input "<папка>" --output outputs\results.csv    # �
    ```
    Флаг `--rebuild-manifest` обязателен: он пересоздаёт `manifest.csv` и
    `image_cache/` под новые пути (в исходном манифесте прописаны абсолютные
-   пути `C:\Users\Антон\...`).
+   пути к папке с данными).
 
 ---
 

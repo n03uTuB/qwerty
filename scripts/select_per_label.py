@@ -88,8 +88,12 @@ def _cv_oof(source, X, cnn, y, groups, n_splits=5):
 
 
 def _f1_prior(y, p):
+    # ВАЖНО: это F1, а не accuracy. При 6-36 позитивах accuracy почти целиком
+    # определяется негативами и к верхушке списка слепа (прежняя версия ошибочно
+    # считала долю верных ответов и обесценивала сравнение источников).
+    from sklearn.metrics import f1_score
     thr, _ = tr.pick_threshold(y, p, "prior")
-    return float(np.mean((p >= thr).astype(int) == y)), thr
+    return float(f1_score(y, (p >= thr).astype(int), zero_division=0)), thr
 
 
 def main() -> None:
