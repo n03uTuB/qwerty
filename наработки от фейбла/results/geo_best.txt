@@ -1,0 +1,17 @@
+﻿[geo_best] ╤Б╤В╤А╨╛╨║=438 ╤А╨╡╨░╨╗╤М╨╜╤Л╤Е=252 CNN=['out/cnn_resnet18', 'out/cnn_resnet34']
+  spine_positioning    cnn=0.832  geoZ=0.842  fusedZ=0.797  
+  spine_axis           cnn=0.524  geoZ=0.719  fusedZ=0.722  
+  spine_artifacts      cnn=0.665  geoZ=0.552  fusedZ=0.621  
+  femur_positioning    cnn=0.718  geoZ=0.588  fusedZ=0.500  
+  femur_roi            cnn=0.840  geoZ=0.752  fusedZ=0.810  
+╨║╨░╤А╤В╨░ ╨┐╨╛ AUC: {'spine_positioning': 'geoZ', 'spine_axis': 'fusedZ', 'spine_artifacts': 'cnn', 'femur_positioning': 'cnn', 'femur_roi': 'cnn'}
+
+╨║╨░╤А╤В╨░                              ╨┐╨╛╤А╨╛╨│    macro-F1     ┬▒std   ╨┐╨╛ ╨╝╨╡╤В╨║╨░╨╝
+  ╨▒╨░╨╖╨░ (cnn + axis fusedZ)         prior       0.431    0.025   ╤Г╨║╨╗╨░╨┤╨║╨░=0.493 ╨╛╤Б╤М=0.225 ╨┐╤А╨╡╨┤╨╝╨╡╤В╤Л=0.345 ROI=0.660
+  ╨▒╨░╨╖╨░ (cnn + axis fusedZ)         blend       0.433    0.023   ╤Г╨║╨╗╨░╨┤╨║╨░=0.487 ╨╛╤Б╤М=0.271 ╨┐╤А╨╡╨┤╨╝╨╡╤В╤Л=0.381 ROI=0.595
+  ╨║╨░╤А╤В╨░ ╨┐╨╛ AUC (cnn/geoZ/fusedZ)   prior       0.410    0.024   ╤Г╨║╨╗╨░╨┤╨║╨░=0.409 ╨╛╤Б╤М=0.225 ╨┐╤А╨╡╨┤╨╝╨╡╤В╤Л=0.345 ROI=0.660
+  ╨║╨░╤А╤В╨░ ╨┐╨╛ AUC (cnn/geoZ/fusedZ)   blend       0.411    0.022   ╤Г╨║╨╗╨░╨┤╨║╨░=0.397 ╨╛╤Б╤М=0.271 ╨┐╤А╨╡╨┤╨╝╨╡╤В╤Л=0.381 ROI=0.595
+
+╨┐╨░╤А╨╜╤Л╨╡ ╤А╨░╨╖╨╜╨╛╤Б╤В╨╕ (╨▒╤Г╤В╤Б╤В╤А╤Н╨┐ ╨┐╨╛ 10 ╤А╨░╨╖╨▒╨╕╨╡╨╜╨╕╤П╨╝):
+  ╨║╨░╤А╤В╨░ AUC - ╨▒╨░╨╖╨░ (prior)                             ╬Ф=-0.021 [-0.023;-0.019]  ╨Ч╨Э╨Р╨з╨Ш╨Ь╨Ю
+  ╨║╨░╤А╤В╨░ AUC + blend - ╨▒╨░╨╖╨░ (prior)                     ╬Ф=-0.020 [-0.041;-0.000]  ╨Ч╨Э╨Р╨з╨Ш╨Ь╨Ю
