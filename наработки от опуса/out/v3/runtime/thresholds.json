@@ -1,0 +1,65 @@
+{
+  "violations": {
+    "spine_positioning": {
+      "threshold": 0.29,
+      "f1": 0.7142857142857143,
+      "n": 99,
+      "pos": 6
+    },
+    "spine_axis": {
+      "threshold": 0.7499999999999999,
+      "f1": 0.631578947368421,
+      "n": 99,
+      "pos": 10
+    },
+    "spine_artifacts": {
+      "threshold": 0.57,
+      "f1": 0.43902439024390244,
+      "n": 99,
+      "pos": 17
+    },
+    "femur_positioning": {
+      "threshold": 0.48999999999999994,
+      "f1": 0.48333333333333334,
+      "n": 150,
+      "pos": 36
+    },
+    "femur_roi": {
+      "threshold": 0.8699999999999999,
+      "f1": 0.8333333333333334,
+      "n": 150,
+      "pos": 7
+    }
+  },
+  "mode": "f1",
+  "features": {
+    "spine_positioning": [
+      "spine_iliac_signal",
+      "spine_bottom_cut"
+    ],
+    "spine_axis": [
+      "spine_midline_angle",
+      "spine_midline_residual"
+    ],
+    "spine_artifacts": [
+      "spine_ribs_signal",
+      "spine_vertebra_peaks"
+    ],
+    "femur_positioning": [
+      "femur_margin_min_cm",
+      "femur_width_cm"
+    ],
+    "femur_roi": [
+      "femur_height_cm",
+      "femur_bone_ratio",
+      "femur_margin_min_cm"
+    ]
+  },
+  "sources": {
+    "spine_positioning": "cnn",
+    "spine_axis": "fused",
+    "spine_artifacts": "fused",
+    "femur_positioning": "geo",
+    "femur_roi": "cnn"
+  }
+}

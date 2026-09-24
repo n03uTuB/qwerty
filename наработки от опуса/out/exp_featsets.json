@@ -1,0 +1,153 @@
+{
+  "base": {
+    "mean": 0.5627193211740363,
+    "std": 0.015261412188282045
+  },
+  "ось geo5": {
+    "mean": 0.5140317458774794,
+    "std": 0.018712673542035662,
+    "diff": -0.04868757529655698,
+    "wins": 0,
+    "n": 20,
+    "crit": "spine_axis",
+    "cols": [
+      "spine_midline_angle",
+      "vertical_symmetry",
+      "spine_midline_residual",
+      "bone_eccentricity",
+      "spine_iliac_signal"
+    ],
+    "src": "geo"
+  },
+  "ось geo3": {
+    "mean": 0.5570077844270305,
+    "std": 0.020075366587890168,
+    "diff": -0.005711536747005847,
+    "wins": 13,
+    "n": 20,
+    "crit": "spine_axis",
+    "cols": [
+      "spine_midline_angle",
+      "vertical_symmetry",
+      "spine_midline_residual"
+    ],
+    "src": "geo"
+  },
+  "ось fused5": {
+    "mean": 0.5351422716662089,
+    "std": 0.016726785744034554,
+    "diff": -0.02757704950782755,
+    "wins": 0,
+    "n": 20,
+    "crit": "spine_axis",
+    "cols": [
+      "spine_midline_angle",
+      "vertical_symmetry",
+      "spine_midline_residual",
+      "bone_eccentricity",
+      "spine_iliac_signal"
+    ],
+    "src": "fused"
+  },
+  "пред geo6": {
+    "mean": 0.561189389216719,
+    "std": 0.01933035039695074,
+    "diff": -0.0015299319573172155,
+    "wins": 12,
+    "n": 20,
+    "crit": "spine_artifacts",
+    "cols": [
+      "spine_ribs_signal",
+      "spine_vertebra_peaks",
+      "spine_midline_residual",
+      "vertical_symmetry",
+      "spine_bone_ratio",
+      "spine_height_cm"
+    ],
+    "src": "geo"
+  },
+  "пред fused6": {
+    "mean": 0.5466150852109309,
+    "std": 0.012051136502252454,
+    "diff": -0.01610423596310546,
+    "wins": 3,
+    "n": 20,
+    "crit": "spine_artifacts",
+    "cols": [
+      "spine_ribs_signal",
+      "spine_vertebra_peaks",
+      "spine_midline_residual",
+      "vertical_symmetry",
+      "spine_bone_ratio",
+      "spine_height_cm"
+    ],
+    "src": "fused"
+  },
+  "ROI geo5": {
+    "mean": 0.5390151760544499,
+    "std": 0.01940052265945148,
+    "diff": -0.023704145119586278,
+    "wins": 0,
+    "n": 20,
+    "crit": "femur_roi",
+    "cols": [
+      "femur_height_cm",
+      "femur_head_diameter_mm",
+      "femur_axis_angle",
+      "bright_area_ratio",
+      "bone_eccentricity"
+    ],
+    "src": "geo"
+  },
+  "ROI fused5": {
+    "mean": 0.4917202052658647,
+    "std": 0.016440130893253472,
+    "diff": -0.07099911590817162,
+    "wins": 0,
+    "n": 20,
+    "crit": "femur_roi",
+    "cols": [
+      "femur_height_cm",
+      "femur_head_diameter_mm",
+      "femur_axis_angle",
+      "bright_area_ratio",
+      "bone_eccentricity"
+    ],
+    "src": "fused"
+  },
+  "бедро geo3": {
+    "mean": 0.5443822031323322,
+    "std": 0.013239502662041965,
+    "diff": -0.01833711804170418,
+    "wins": 0,
+    "n": 20,
+    "crit": "femur_positioning",
+    "cols": [
+      "femur_trochanter_bulge",
+      "femur_axis_angle",
+      "femur_height_cm"
+    ],
+    "src": "geo"
+  },
+  "бедро fused3": {
+    "mean": 0.5647407094590511,
+    "std": 0.016230589384327074,
+    "diff": 0.0020213882850148024,
+    "wins": 17,
+    "n": 20,
+    "crit": "femur_positioning",
+    "cols": [
+      "femur_trochanter_bulge",
+      "femur_axis_angle",
+      "femur_height_cm"
+    ],
+    "src": "fused"
+  },
+  "ALL4": {
+    "mean": 0.4558862467530835,
+    "std": 0.02401897846657191,
+    "diff": -0.10683307442095291,
+    "wins": 0,
+    "n": 20
+  }
+}

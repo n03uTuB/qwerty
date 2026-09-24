@@ -1,0 +1,47 @@
+{
+  "honest": {
+    "macro": 0.5627193211740363,
+    "macro_std": 0.015261412188282045,
+    "per_label": {
+      "укладка": 0.49571826410878367,
+      "ось": 0.6195488721804512,
+      "предметы": 0.3852438480406101,
+      "ROI": 0.7503663003663003
+    },
+    "ba": 0.6579175747198007,
+    "qf1": 0.6148838466043508,
+    "auc": 0.6659402241594023
+  },
+  "config": {
+    "features": {
+      "spine_positioning": [
+        "spine_iliac_signal",
+        "spine_bottom_cut"
+      ],
+      "spine_axis": [
+        "spine_midline_angle",
+        "spine_midline_residual"
+      ],
+      "spine_artifacts": [
+        "spine_ribs_signal",
+        "spine_vertebra_peaks"
+      ],
+      "femur_positioning": [
+        "femur_margin_min_cm",
+        "femur_width_cm"
+      ],
+      "femur_roi": [
+        "femur_height_cm",
+        "femur_bone_ratio",
+        "femur_margin_min_cm"
+      ]
+    },
+    "sources": {
+      "spine_positioning": "cnn",
+      "spine_axis": "fused",
+      "spine_artifacts": "fused",
+      "femur_positioning": "geo",
+      "femur_roi": "cnn"
+    }
+  }
+}

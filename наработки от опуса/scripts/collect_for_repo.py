@@ -1,0 +1,141 @@
+# -*- coding: utf-8 -*-
+"""Скопировать наработки dxa_qc_work в клон репозитория qwerty.
+
+Копирует всё, кроме мёртвых чекпоинтов CNN (*.pt вне v3/runtime), __pycache__ и
+*.pyc. Пишет README.md с обзором результатов.
+
+Запуск:
+    python collect_for_repo.py <dst_dir>
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+
+SRC = r"C:\Users\куку\Desktop\dxa_qc_work"
+
+README = """# Наработки от «Опуса» — улучшение метрик DXA-QC
+
+Отдельная папка с исследованиями по задаче контроля качества DXA (хакатон МКЦД).
+Репозиторий `mogaem`/`qwerty` **не изменялся** — вся работа изолирована здесь.
+
+## Главный результат
+
+Метрика организатора (**macro-F1 по 4 меткам**) поднята с **0.507 до 0.563 (+0.056)**.
+Подтверждено парно на 20 разбиениях `StratifiedGroupKFold` по `study_uid`:
+выигрыш в **19/20** разбиений (по метке «ось» — 20/20).
+
+| метрика | база | v3 | Δ |
+|---|---|---|---|
+| **macro-F1 (4 метки)** | 0.507 ± 0.017 | **0.563 ± 0.015** | **+0.056** |
+| укладка | 0.496 | 0.496 | — |
+| ось | 0.423 | **0.620** | +0.196 |
+| предметы | 0.357 | 0.385 | +0.028 |
+| ROI | 0.750 | 0.750 | — |
+| quality BA | 0.668 | 0.658 | −0.010 |
+| quality macro-F1 | 0.612 | 0.615 | +0.003 |
+
+AUC по критериям: `spine_artifacts` **0.557 → 0.700**, `spine_axis` 0.889 → 0.894.
+
+## Суть изменения (2 правки в `config.py`)
+
+```python
+CRITERION_SOURCES = {
+    ...
+    "spine_artifacts": "fused",   # было "cnn": геометрия добавляет AUC 0.56→0.70
+}
+CRITERION_FEATURES_OVERRIDE = {
+    "spine_axis": ["spine_midline_angle", "spine_midline_residual"],
+}
+```
+
+Логику править не нужно — `stack.py` это уже поддерживает. Остаточная кривизна
+средней линии (`spine_midline_residual`) делает ранжирование оси разделяющим:
+F1 оси 0.42 → 0.62 (репозиторий сам отмечал: «AUC оси 0.82, а F1 0.42»).
+
+## Структура
+
+- `scripts/` — все скрипты экспериментов и обвязка (честный протокол, парные тесты,
+  сборка бандла, сквозной инференс).
+- `docs/report_v3.md` — полный отчёт: обоснование, патч конфига, команды запуска.
+- `out/` — результаты: `SUMMARY.md`, `final_report.json`, `exp_*.json`, бандл `v3/`.
+- `out/v3/runtime/` — самодостаточный бандл для инференса (стекер + пороги + веса).
+- `logs/` — логи прогонов.
+
+## Что проверено и отклонено (честно, 20 разбиений)
+
+- перебор геометрических признаков и жадный отбор — не обобщается (ALL4 = −0.107);
+- нелинейные модели (RF/GBM/SVM/полином) — не лучше LR;
+- переобучение CNN на GPU (resnet18, с aux-маской и без) — хуже базового CNN;
+- ансамбль двух CNN — 0.514 < 0.563;
+- режим порога `prior` вместо `f1` — 0.469 < 0.563;
+- выбор режима порога на метку (оракульный) — 0.558 < 0.563.
+
+## Как воспроизвести
+
+```powershell
+cd scripts
+$env:PYTHONIOENCODING='utf-8'
+python exp_v2.py --seeds 20        # контроль: база = 0.507
+python exp_confirm.py --seeds 20   # парное подтверждение v3
+python final_report.py --seeds 20  # итоговая таблица база vs v3
+```
+
+Скрипты берут код из репозитория через переменную `DXA_REPO` (по умолчанию
+`C:\\Users\\куку\\Desktop\\mogaem`).
+
+## Инференс
+
+`out/v3/runtime/` — бандл (stacker.joblib, thresholds.json, best_model.pt).
+Сквозной прогон на реальных DICOM проверен: `out/v3/predictions.csv` = 252 строки,
+все `Success`, ~6.5 с/снимок (лимит <3 мин/исследование соблюдён).
+"""
+
+
+def keep(path: str) -> bool:
+    rel = os.path.relpath(path, SRC).replace("\\", "/")
+    parts = rel.split("/")
+    if "__pycache__" in parts:
+        return False
+    if path.endswith(".pyc"):
+        return False
+    if path.endswith(".pt"):
+        # оставляем только веса рабочего бандла v3
+        return rel == "out/v3/runtime/best_model.pt"
+    return True
+
+
+def main():
+    dst = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
+        os.path.expanduser("~"), "AppData", "Local", "Temp", "opencode",
+        "qwerty_repo", "наработки от опуса")
+    if os.path.isdir(dst):
+        shutil.rmtree(dst)
+    os.makedirs(dst)
+
+    n = 0
+    total = 0
+    for root, dirs, files in os.walk(SRC):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        for name in files:
+            src_path = os.path.join(root, name)
+            if not keep(src_path):
+                continue
+            rel = os.path.relpath(src_path, SRC)
+            out_path = os.path.join(dst, rel)
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            shutil.copy2(src_path, out_path)
+            n += 1
+            total += os.path.getsize(src_path)
+
+    with open(os.path.join(dst, "README.md"), "w", encoding="utf-8") as f:
+        f.write(README)
+
+    print(f"скопировано файлов: {n}")
+    print(f"объём: {total/1024/1024:.1f} МБ")
+    print(f"папка: {dst}")
+
+
+if __name__ == "__main__":
+    main()
