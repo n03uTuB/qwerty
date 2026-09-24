@@ -138,7 +138,11 @@ class QualityController:
                     continue
                 st = self.stackers[name]
                 i = C.VIOLATION_IDX[name]
-                x = np.array([v[i]] + [feat[f] for f in st["features"]]).reshape(1, -1)
+                # use_cnn=True — гибрид (CNN + геометрия), False — чистая геометрия
+                feats = [feat[f] for f in st["features"]]
+                if st.get("use_cnn", True):
+                    feats = [v[i]] + feats
+                x = np.array(feats).reshape(1, -1)
                 v_fused[i] = float(st["clf"].predict_proba(x)[0, 1])
 
         # список сработавших нарушений только для критериев данной области

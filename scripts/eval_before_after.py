@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """Сравнение «до/после» на ОДНОЙ честной схеме.
 
-Что изменилось в пайплайне за эту итерацию:
-  1. источник скора по критерию: было — гибрид (CNN + геометрия) для всех;
-     стало — чистая сеть, гибрид только для оси позвоночника
-     (config.CRITERION_SOURCES);
-  2. режим порога: было — prior (k = доля * n); стало — f1 (оптимум F1 на train).
+Что изменилось в пайплайне по итерациям:
+  * было — гибрид (CNN + геометрия) для всех критериев + режим prior;
+  * итерация 2 — источник по критерию (чистая сеть, гибрид только для оси
+    позвоночника) + режим порога f1 (config.CRITERION_SOURCES, THRESHOLD_MODE);
+  * итерация 3 — для femur_positioning источник заменён на чистую геометрию.
 
-Оба изменения отобраны по F1@prior / честной CV, а не по глобальному AUC.
+Изменения отбирались по F1 / честной CV, а не по глобальному AUC.
 
 Запуск:
     cd dxa_qc && python ../scripts/eval_before_after.py
@@ -38,11 +38,15 @@ def main() -> None:
     real = np.asarray(ds.real_mask(data))
     S = E.build_scores(data, real)
     crits = list(C.VIOLATIONS)
+    # конфигурация итерации 2: бедро на CNN (в итерации 3 переведено на геометрию)
+    sm_iter2 = {"spine_positioning": "cnn", "spine_axis": "fused",
+                "spine_artifacts": "cnn", "femur_positioning": "cnn",
+                "femur_roi": "cnn"}
 
     variants = {
         "БЫЛО: гибрид везде + prior": ({c: "fusedold" for c in crits}, "prior"),
-        "шаг 1: источники по критерию + prior": ({c: st.source_of(c) for c in crits}, "prior"),
-        "шаг 2 (итог): источники + f1": ({c: st.source_of(c) for c in crits}, "f1"),
+        "итерация 2: источники (бедро=cnn) + f1": (sm_iter2, "f1"),
+        "итерация 3 (итог): бедро=геометрия + f1": ({c: st.source_of(c) for c in crits}, "f1"),
     }
     print(f"Честная оценка ({N_SEEDS} разбиений, объединённые val-предсказания):\n")
     print(f"{'вариант':40} {'macro-F1':>16} {'quality BA':>14} {'quality F1':>14}")

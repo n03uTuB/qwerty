@@ -256,24 +256,26 @@ def main():
         with open(stack_path, encoding="utf-8") as f:
             st = json.load(f)
         comp = st.get("comparison", {})
-        L.append("\n## Гибридная модель (CNN + геометрические признаки)\n")
-        L.append("| Критерий | CNN F1 | CNN AUC | Гибрид F1 | Гибрид AUC |")
-        L.append("|---|---|---|---|---|")
+        L.append("\n## Источник скора по критериям (CNN / геометрия / гибрид)\n")
+        L.append("| Критерий | Источник | CNN F1 | CNN AUC | Боевой F1 | Боевой AUC |")
+        L.append("|---|---|---|---|---|---|")
 
         def _row(title, key):
             a = comp.get(key + "_cnn_only", {})
             b = comp.get(key + "_fused", {})
+            src = C.CRITERION_SOURCES.get(key, "fused")
             if a.get("f1") is None or b.get("f1") is None:
-                L.append("| %s | - | - | - | - |" % title)
+                L.append("| %s | %s | - | - | - | - |" % (title, src))
             else:
-                L.append("| %s | %.3f | %.3f | %.3f | %.3f |" % (
-                    title, a["f1"], a["auc"], b["f1"], b["auc"]))
+                L.append("| %s | %s | %.3f | %.3f | %.3f | %.3f |" % (
+                    title, src, a["f1"], a["auc"], b["f1"], b["auc"]))
 
         for name in C.VIOLATIONS:
             _row(name, name)
         L.append("")
-        L.append("Геометрические признаки применяются к критериям нарушений; "
-                 "класс качества = ИЛИ(сработавших критериев) — гейт по "
+        L.append("Боевой скор — по config.CRITERION_SOURCES: `cnn` (чистая сеть), "
+                 "`fused` (CNN + геометрия), `geo` (чистая геометрия). "
+                 "Класс качества = ИЛИ(сработавших критериев) — гейт по "
                  "нейросети снят (см. docs/metrics_improvement.md).\n")
 
     path = os.path.join(C.ARTIFACTS_DIR, "report.md")

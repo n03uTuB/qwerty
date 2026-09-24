@@ -56,9 +56,10 @@ QUALITY_FEATURES = []
 # Позволяем переопределить наборы через config (для A/B без правки кода).
 CRITERION_FEATURES.update(getattr(C, "CRITERION_FEATURES_OVERRIDE", {}) or {})
 
-# Источник скора по критерию: "fused" (CNN + геометрия) или "cnn" (только сеть).
-# Обоснование — в config.CRITERION_SOURCES: в режиме prior гибрид помогает
-# только оси позвоночника, а на бедре проигрывает сети по precision@k.
+# Источник скора по критерию: "fused" (CNN + геометрия), "cnn" (только сеть) или
+# "geo" (только геометрия). Обоснование — в config.CRITERION_SOURCES: гибрид
+# помогает оси позвоночника; на бедре CNN шумит, и чистая геометрия обыгрывает
+# и сеть, и гибрид по F1 в честной схеме.
 CRITERION_SOURCES = getattr(C, "CRITERION_SOURCES", {}) or {}
 
 
@@ -97,6 +98,20 @@ def _cv_cnn_only(cnn_prob, y, groups, n_splits=5):
         clf = _make_clf()
         clf.fit(Xf[tr], y[tr])
         oof[va] = clf.predict_proba(Xf[va])[:, 1]
+    return oof
+
+
+def _cv_geo_only(X, y, groups, n_splits=5):
+    """Кросс-валидированный скор только по геометрии: [features] -> LR (без CNN)."""
+    n = len(y)
+    oof = np.full(n, np.nan)
+    gkf = GroupKFold(n_splits=n_splits)
+    for tr, va in gkf.split(X, y, groups=groups):
+        if len(np.unique(y[tr])) < 2:
+            continue
+        clf = _make_clf()
+        clf.fit(X[tr], y[tr])
+        oof[va] = clf.predict_proba(X[va])[:, 1]
     return oof
 
 
@@ -151,8 +166,9 @@ def main():
             continue
         idv = np.where(val)[0]
         cols = CRITERION_FEATURES.get(name, QUALITY_FEATURES)
+        src = source_of(name)
 
-        if source_of(name) == "cnn" or not cols:
+        if src == "cnn" or not cols:
             # Источник — чистая сеть. В режиме prior гибрид здесь проигрывает
             # (см. config.CRITERION_SOURCES): оставляем CNN-шкалу, стекер не
             # строим — inference.py уже откатывается на CNN для таких критериев.
@@ -163,10 +179,13 @@ def main():
             continue
 
         Xv = data[cols].fillna(0).values if cols else np.zeros((n, 0), dtype=float)
-        fused_v = _cv_fuse(Xv[idv], oof_v[idv, j], yv[idv].astype(int), groups[idv])
         cnn_v = _cv_cnn_only(oof_v[idv, j], yv[idv].astype(int), groups[idv])
-        stack_v[idv, j] = fused_v
-        results["violations"][name] = _score(yv[idv], fused_v)
+        if src == "geo":
+            model_v = _cv_geo_only(Xv[idv], yv[idv].astype(int), groups[idv])
+        else:
+            model_v = _cv_fuse(Xv[idv], oof_v[idv, j], yv[idv].astype(int), groups[idv])
+        stack_v[idv, j] = model_v
+        results["violations"][name] = _score(yv[idv], model_v)
         results["comparison"][name + "_cnn_only"] = _score(yv[idv], cnn_v)
         results["comparison"][name + "_fused"] = results["violations"][name]
 
@@ -184,14 +203,18 @@ def main():
             yv = data["viol_" + name].values.astype(float)
             val = ~np.isnan(yv) & ~np.isnan(oof_v[:, j]) & real
             cols = CRITERION_FEATURES.get(name, QUALITY_FEATURES)
-            if source_of(name) != "fused" or not cols:
+            src = source_of(name)
+            if src not in ("fused", "geo") or not cols:
                 continue
             if val.sum() and len(np.unique(yv[val])) > 1:
                 Xv = data[cols].fillna(0).values if cols else \
                     np.zeros((n, 0), dtype=float)
+                use_cnn = (src == "fused")
+                base = (np.column_stack([oof_v[val, j], Xv[val]]) if use_cnn
+                        else Xv[val])
                 clf = _make_clf()
-                clf.fit(np.column_stack([oof_v[val, j], Xv[val]]), yv[val].astype(int))
-                stackers[name] = dict(clf=clf, features=cols)
+                clf.fit(base, yv[val].astype(int))
+                stackers[name] = dict(clf=clf, features=cols, use_cnn=use_cnn)
         joblib.dump(stackers, STACKER_PATH)
         print("[stack] стекеры сохранены:", STACKER_PATH)
     except Exception as e:
