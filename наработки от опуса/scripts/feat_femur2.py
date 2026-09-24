@@ -136,10 +136,15 @@ def femur2_features(arr: np.ndarray, spacing=C.PIXEL_SPACING_MM) -> dict:
         peak = float(np.clip(dev, 0, None).max())
     out["f2_troch_bulge"] = bulge
     out["f2_troch_area"] = area
-    # нормировка на диаметр головки (конституционная инвариантность)
-    denom = max(head_diameter, 1e-6)
-    out["f2_troch_area_norm"] = float(area / (denom ** 2))
-    out["f2_troch_peak_norm"] = float(peak / denom)
+    # нормировка на диаметр головки (конституционная инвариантность).
+    # Диаметр может не определиться (0) — тогда нормировка не считается, иначе деление
+    # на ~0 даёт выбросы в 1e15 и ломает линейную модель.
+    if head_diameter > 5.0:
+        out["f2_troch_area_norm"] = float(area / (head_diameter ** 2))
+        out["f2_troch_peak_norm"] = float(peak / head_diameter)
+    else:
+        out["f2_troch_area_norm"] = 0.0
+        out["f2_troch_peak_norm"] = 0.0
 
     shaft_rows = [r for r in range(int(y0 + height * 0.75), y1 + 1) if edge(r) is not None]
     if len(shaft_rows) >= 8:
