@@ -1,0 +1,59 @@
+{
+  "quality": {
+    "threshold": 0.26999999999999996,
+    "f1": 0.4931506849315068,
+    "n": 249
+  },
+  "quality_by_region": {
+    "lumbar_spine": {
+      "threshold": 0.06,
+      "f1": 0.49230769230769234,
+      "n": 99,
+      "pos": 32
+    },
+    "proximal_femur_left": {
+      "threshold": 0.29,
+      "f1": 0.4918032786885246,
+      "n": 78,
+      "pos": 22
+    },
+    "proximal_femur_right": {
+      "threshold": 0.24999999999999994,
+      "f1": 0.5396825396825397,
+      "n": 72,
+      "pos": 19
+    }
+  },
+  "violations": {
+    "spine_positioning": {
+      "threshold": 0.5299999999999999,
+      "f1": 0.6666666666666666,
+      "n": 99,
+      "pos": 6
+    },
+    "spine_axis": {
+      "threshold": 0.6,
+      "f1": 0.5,
+      "n": 99,
+      "pos": 10
+    },
+    "spine_artifacts": {
+      "threshold": 0.4099999999999999,
+      "f1": 0.625,
+      "n": 99,
+      "pos": 17
+    },
+    "femur_positioning": {
+      "threshold": 0.57,
+      "f1": 0.5,
+      "n": 150,
+      "pos": 36
+    },
+    "femur_roi": {
+      "threshold": 0.30999999999999994,
+      "f1": 0.3448275862068966,
+      "n": 150,
+      "pos": 7
+    }
+  }
+}

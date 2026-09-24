@@ -1,0 +1,24 @@
+=== одиночные новые признаки (AUC±std) ===
+  fatlas_resid_bone        AUC=0.615±0.011
+  fatlas_bone_iou          AUC=0.430±0.043
+  fatlas_resid_out         AUC=0.556±0.013
+  falign_angle             AUC=0.544±0.014
+  falign_scale             AUC=0.461±0.057
+  fatlas_resid_out_p99     AUC=0.537±0.018
+  fatlas_outlier_area      AUC=0.525±0.038
+
+=== наборы ===
+  geo    cur O (min+width)      AUC=0.632±0.018 F1=0.485±0.003
+  fused  cur O (min+width)      AUC=0.658±0.011 F1=0.463±0.019
+  geo    fatlas iou+angle       AUC=0.516±0.023 F1=0.330±0.019
+  fused  fatlas iou+angle       AUC=0.589±0.014 F1=0.351±0.020
+  geo    falign_angle (1)       AUC=0.544±0.014 F1=0.346±0.014
+  fused  falign_angle (1)       AUC=0.602±0.015 F1=0.354±0.019
+  geo    fatlas+width           AUC=0.608±0.032 F1=0.428±0.030
+  fused  fatlas+width           AUC=0.643±0.022 F1=0.451±0.028
+  geo    fatlas+bulge           AUC=0.608±0.017 F1=0.431±0.017
+  fused  fatlas+bulge           AUC=0.636±0.019 F1=0.422±0.027
+  geo    fatlas+bone_ecc        AUC=0.475±0.036 F1=0.274±0.051
+  fused  fatlas+bone_ecc        AUC=0.572±0.026 F1=0.333±0.032
+  geo    fatlas+resid           AUC=0.579±0.015 F1=0.403±0.019
+  fused  fatlas+resid           AUC=0.604±0.015 F1=0.404±0.027

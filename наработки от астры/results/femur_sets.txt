@@ -1,0 +1,18 @@
+=== femur_positioning: источники/наборы (AUC±std, macroF1±std) ===
+  cnn (v3)                   AUC=0.627±0.000 F1=0.261±0.000
+  geo            cur O: min+width           AUC=0.632±0.018 F1=0.485±0.003
+  fused          cur O: min+width           AUC=0.658±0.011 F1=0.463±0.019
+  geo            troch_bulge (1)            AUC=0.622±0.009 F1=0.446±0.012
+  fused          troch_bulge (1)            AUC=0.648±0.012 F1=0.397±0.018
+  geo            width+bulge                AUC=0.656±0.016 F1=0.426±0.018
+  fused          width+bulge                AUC=0.660±0.014 F1=0.421±0.020
+  geo            width+bulge+neck           AUC=0.627±0.021 F1=0.380±0.028
+  fused          width+bulge+neck           AUC=0.637±0.015 F1=0.390±0.019
+  geo            width+bulge+shaft          AUC=0.634±0.016 F1=0.406±0.026
+  fused          width+bulge+shaft          AUC=0.648±0.012 F1=0.396±0.030
+  geo            margin+bulge+neck          AUC=0.561±0.026 F1=0.347±0.036
+  fused          margin+bulge+neck          AUC=0.582±0.021 F1=0.354±0.025
+  geo            A troch+area+neck          AUC=0.553±0.023 F1=0.361±0.041
+  fused          A troch+area+neck          AUC=0.591±0.019 F1=0.367±0.018
+  geo            width+bulge+axis           AUC=0.646±0.023 F1=0.445±0.026
+  fused          width+bulge+axis           AUC=0.657±0.022 F1=0.423±0.023

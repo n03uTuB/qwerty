@@ -1,0 +1,13 @@
+# не тащим в образ ничего лишнего
+__pycache__/
+*.pyc
+.git/
+.venv/
+venv/
+data/
+out/
+outputs/
+artifacts/image_cache/
+artifacts/synthetic/
+*.xlsx
+*.log

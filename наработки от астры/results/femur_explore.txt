@@ -1,0 +1,30 @@
+=== одиночные признаки femur_positioning (AUC, 10x5) ===
+  femur_width_cm             AUC=0.646±0.017
+  femur_trochanter_bulge     AUC=0.622±0.009
+  vertical_symmetry          AUC=0.403±0.049
+  bright_area_ratio          AUC=0.412±0.031
+  femur_neck_width_mm        AUC=0.413±0.057
+  bone_eccentricity          AUC=0.417±0.059
+  femur_shaft_deg            AUC=0.575±0.017
+  femur_margin_min_cm        AUC=0.561±0.030
+  femur_axis_angle           AUC=0.560±0.014
+  femur_neck_to_head         AUC=0.543±0.020
+  femur_troch_area_mm2       AUC=0.458±0.043
+  femur_height_cm            AUC=0.468±0.047
+  femur_margin_top_cm        AUC=0.474±0.035
+  femur_margin_bottom_cm     AUC=0.474±0.035
+  femur_head_diameter_mm     AUC=0.507±0.021
+  femur_bone_ratio           AUC=0.507±0.033
+  spine_vertebra_peaks       AUC=0.500±0.000
+  spine_top_cut              AUC=0.500±0.000
+  spine_ribs_signal          AUC=0.500±0.000
+  spine_midline_residual     AUC=0.500±0.000
+  spine_midline_angle        AUC=0.500±0.000
+  spine_margin_bottom_cm     AUC=0.500±0.000
+  spine_iliac_signal         AUC=0.500±0.000
+  spine_height_cm            AUC=0.500±0.000
+  spine_bottom_cut           AUC=0.500±0.000
+
+текущий набор ['femur_margin_min_cm', 'femur_width_cm']: AUC=0.632±0.018
+proximal_femur_left: pos=19/78
+proximal_femur_right: pos=17/72

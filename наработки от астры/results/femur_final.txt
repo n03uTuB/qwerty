@@ -1,0 +1,8 @@
+=== femur_positioning: train/held-out ===
+  width+axis+bboxh             [fused] train=0.690 held=0.676±0.008 F1=0.451
+  cur geo [margin_min,width]   [geo] train=0.634 held=0.630±0.021 F1=0.483
+  width+bboxh+headdx           [fused] train=0.643 held=0.629±0.017 F1=0.427
+  width+bboxh                  [fused] train=0.648 held=0.626±0.019 F1=0.420
+  width+bboxh+bulge            [fused] train=0.643 held=0.623±0.020 F1=0.377
+  width+margin+bboxh           [fused] train=0.649 held=0.623±0.018 F1=0.409
+  width+bboxh+headdx+bulge     [fused] train=0.632 held=0.620±0.015 F1=0.377

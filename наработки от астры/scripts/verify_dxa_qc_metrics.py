@@ -24,6 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DATASET = os.environ.get("DXA_DATASET", os.path.join(HERE, "..", "_dsroot"))
 sys.path.insert(0, os.path.join(HERE, "..", "dxa_qc"))
 sys.path.insert(0, os.path.join(HERE, ".."))
+sys.path.insert(0, os.path.join(HERE, "..", ".."))  # корень репозитория (dxa_real/dxa_qc)
 
 from src import config as C                       # noqa: E402
 from src import dataset as ds                     # noqa: E402

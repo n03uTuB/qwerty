@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# крупные бинарники/производные артефакты (не коммитим)
+artifacts/*.pt
+artifacts/*.npy
+artifacts/*.joblib
+artifacts/image_cache/
+artifacts/manifest.csv
+artifacts/features.csv
+artifacts/*.log
+/outputs/
+/data/
+
+# src/data — это пакет решения (перебиваем корневой шаблон «data/»)
+!src/data/
+!src/data/*.py
+src/data/__pycache__/
+/out/
+
+# локальные данные/кэш
+*.tmp

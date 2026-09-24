@@ -1,0 +1,2 @@
+ЛУЧШИЙ набор: ['femur_width_cm', 'femur_margin_top_cm']
+train AUC=0.688  held-out AUC=0.682  held-out F1=0.493±0.016

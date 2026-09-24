@@ -25,6 +25,7 @@ import pandas as pd
 from PIL import Image as PILImage
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "наработки от астры"))
 
 from dxa_real import synth_real
 from dxa_real.data import (LABEL_AXIS, LABEL_FOREIGN, LABEL_POSITIONING, LABEL_ROI, load_dataset)

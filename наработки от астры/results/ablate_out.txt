@@ -1,0 +1,16 @@
+
+=== spine_artifacts (положительных 17/99) ===
+  base (v3)                  k=2  AUC=0.706±0.012  macroF1=0.423±0.037
+  art_edge_out_p99 (1)       k=1  AUC=0.790±0.010  macroF1=0.487±0.018
+  art (2)                    k=2  AUC=0.763±0.024  macroF1=0.464±0.029
+  art+atlas (4)              k=4  AUC=0.847±0.019  macroF1=0.574±0.066
+  phys+art (4)               k=4  AUC=0.765±0.019  macroF1=0.442±0.028
+  --> по AUC лучший: art+atlas (4)
+
+=== spine_positioning (положительных 6/99) ===
+  base (v3)                  k=2  AUC=0.785±0.019  macroF1=0.218±0.007
+  iliac+atlas+exc (3)        k=3  AUC=0.769±0.016  macroF1=0.257±0.033
+  iliac+art+atlas+exc (4)    k=4  AUC=0.832±0.007  macroF1=0.340±0.018
+  atlas geo (3)              k=3  AUC=0.720±0.015  macroF1=0.194±0.008
+  atlas_resid (2)            k=2  AUC=0.718±0.027  macroF1=0.180±0.012
+  --> по AUC лучший: iliac+art+atlas+exc (4)

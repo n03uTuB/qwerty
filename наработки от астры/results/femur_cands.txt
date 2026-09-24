@@ -1,0 +1,19 @@
+=== кандидаты femur_positioning (AUC±std) ===
+  f_head_dx        AUC=0.641±0.008
+  f_aspect         AUC=0.388±0.044
+  f_cx_off         AUC=0.431±0.045
+  f_margin_left    AUC=0.438±0.024
+  f_fill           AUC=0.559±0.018
+  f_cy             AUC=0.557±0.024
+  f_orient         AUC=0.526±0.018
+  f_cx             AUC=0.483±0.034
+  f_bbox_w         AUC=0.514±0.024
+  f_body_frac      AUC=0.486±0.029
+  f_margin_min     AUC=0.486±0.051
+  f_shaft_tilt     AUC=0.486±0.067
+  f_margin_top     AUC=0.508±0.045
+  f_margin_bottom  AUC=0.508±0.045
+  f_head_dy        AUC=0.508±0.045
+  f_bbox_h         AUC=0.508±0.045
+  f_margin_right   AUC=0.505±0.035
+  f_area           AUC=0.503±0.036
