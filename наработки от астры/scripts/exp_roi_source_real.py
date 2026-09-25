@@ -49,10 +49,10 @@ def log(msg: str) -> None:
 # --------------------------------------------------------------------------- #
 # Пороги и метрики одного разбиения
 # --------------------------------------------------------------------------- #
-def _thresholds(df, thr_src, mask, roi_mode=None):
+def _thresholds(df, thr_src, mask, mode_map=None):
     by_crit = dict(C.THRESHOLD_MODE_BY_CRITERION)
-    if roi_mode:
-        by_crit["femur_roi"] = roi_mode
+    if mode_map:
+        by_crit.update({k: v for k, v in mode_map.items() if v})
     return pick_criterion_thresholds(df, thr_src, mask, mode="mapped",
                                      by_criterion=by_crit)
 
@@ -108,7 +108,7 @@ def _folds(df, real, protocol, seeds):
     return out
 
 
-def _pooled_foldid_protocol(df, stack_v, tr_v, real, scale, roi_mode):
+def _pooled_foldid_protocol(df, stack_v, tr_v, real, scale, mode_map):
     """Пул val-предсказаний по фолдам fold_id (как в src.evaluate)."""
     fold_id = np.load(os.path.join(C.ARTIFACTS_DIR, "fold_id.npy"))
     n = len(df)
@@ -120,7 +120,7 @@ def _pooled_foldid_protocol(df, stack_v, tr_v, real, scale, roi_mode):
         va = np.where((fold_id == k) & real)[0]
         tr = (fold_id != k) & real & np.isfinite(tr_v[:, 0])
         thr_src = tr_v if scale == "cnn" else stack_v
-        thr = _thresholds(df, thr_src, tr, roi_mode)
+        thr = _thresholds(df, thr_src, tr, mode_map)
         for name in ORG_LABEL_NAMES:
             members = [(stack_v[va, C.VIOLATION_IDX[c]] >= thr[c]["threshold"]
                         ).astype(float) for c in C.ORG_LABELS[name]]
@@ -144,10 +144,10 @@ def _f1_pooled(truth, pred):
 
 
 def evaluate_protocol(df, stack_v, tr_v, real, protocol, scale, seeds,
-                      roi_mode=None):
+                      mode_map=None):
     if protocol == "fold_id":
         org_pred, q_class, q_prob = _pooled_foldid_protocol(
-            df, stack_v, tr_v, real, scale, roi_mode)
+            df, stack_v, tr_v, real, scale, mode_map)
         per = {k: _f1_pooled(org_label_truth(df, k), org_pred[k])
                for k in ORG_LABEL_NAMES}
         macro = float(np.nanmean(list(per.values())))
@@ -171,7 +171,7 @@ def evaluate_protocol(df, stack_v, tr_v, real, protocol, scale, seeds,
             m[va] = True
             tr = real & ~m & np.isfinite(tr_v[:, 0])
             thr_src = tr_v if scale == "cnn" else stack_v
-            thr = _thresholds(df, thr_src, tr, roi_mode)
+            thr = _thresholds(df, thr_src, tr, mode_map)
             for k, v in _org_on_val(df, stack_v, va, thr).items():
                 pl[k].append(v)
             qm = _qc_on_val(df, stack_v, va, thr, real)
@@ -194,7 +194,7 @@ def evaluate_protocol(df, stack_v, tr_v, real, protocol, scale, seeds,
 # --------------------------------------------------------------------------- #
 # Парный кластер-бутстрэп по исследованиям (пул val по фолдам fold_id)
 # --------------------------------------------------------------------------- #
-def _pooled(df, oof_v, tr_v, real, scale, roi_mode=None):
+def _pooled(df, oof_v, tr_v, real, scale, mode_map=None):
     fold_id = np.load(os.path.join(C.ARTIFACTS_DIR, "fold_id.npy"))
     n = len(df)
     org_pred = {k: np.full(n, np.nan) for k in ORG_LABEL_NAMES}
@@ -204,7 +204,7 @@ def _pooled(df, oof_v, tr_v, real, scale, roi_mode=None):
         va = np.where((fold_id == k) & real)[0]
         tr = (fold_id != k) & real & np.isfinite(tr_v[:, 0])
         thr_src = tr_v if scale == "cnn" else oof_v
-        thr = _thresholds(df, thr_src, tr, roi_mode)
+        thr = _thresholds(df, thr_src, tr, mode_map)
         for name in ORG_LABEL_NAMES:
             members = [(oof_v[va, C.VIOLATION_IDX[c]] >= thr[c]["threshold"]
                         ).astype(float) for c in C.ORG_LABELS[name]]
@@ -217,11 +217,11 @@ def _pooled(df, oof_v, tr_v, real, scale, roi_mode=None):
     return org_pred, q_class
 
 
-def paired_bootstrap(df, oof_a, oof_b, real, scale, roi_mode=None,
+def paired_bootstrap(df, oof_a, oof_b, real, scale, mode_map=None,
                      n_boot=2000, seed=0):
     truth = {k: org_label_truth(df, k) for k in ORG_LABEL_NAMES}
-    pa, qa = _pooled(df, oof_a, tr_v_g, real, scale, roi_mode)
-    pb, qb = _pooled(df, oof_b, tr_v_g, real, scale, roi_mode)
+    pa, qa = _pooled(df, oof_a, tr_v_g, real, scale, mode_map)
+    pb, qb = _pooled(df, oof_b, tr_v_g, real, scale, mode_map)
     yq = df["quality"].values.astype(float)
     groups = df["study_uid"].values
     uniq = np.unique(groups)
@@ -282,11 +282,23 @@ def main() -> int:
     ap.add_argument("--scale", default="cnn", choices=["cnn", "clean"])
     ap.add_argument("--roi-mode", default=None,
                     choices=[None, "f1", "prior", "blend"])
+    ap.add_argument("--mode-map", action="append", default=None,
+                    help="per-criterion режим порога (можно несколько раз), "
+                         "напр. 'spine_axis=blend'")
     ap.add_argument("--base", default="first",
                     help="имя конфигурации-базы для бутстрэпа ('first' = первая)")
     ap.add_argument("--bootstrap", action="store_true")
     args = ap.parse_args()
     sources = [s.strip() for s in args.sources.split(",") if s.strip()]
+
+    mode_map = {}
+    if args.roi_mode:
+        mode_map["femur_roi"] = args.roi_mode
+    for spec in (args.mode_map or []):
+        for part in spec.split(","):
+            if part.strip():
+                k, v = part.split("=")
+                mode_map[k.strip()] = v.strip()
 
     df = load_features(load_manifest(C.MANIFEST_CSV))
     oof_q = np.load(C.OOF_QUALITY_NPY)
@@ -325,7 +337,7 @@ def main() -> int:
         scores[name] = stack_v
         macro, sd, per, q, per_seed = evaluate_protocol(
             df, stack_v, tr_v, real, args.protocol, args.scale, args.seeds,
-            args.roi_mode)
+            mode_map)
         seeds_stats[name] = per_seed
         log("")
         log("--- %s ---" % name)
@@ -345,7 +357,7 @@ def main() -> int:
             if name == ref:
                 continue
             r = paired_bootstrap(df, scores[name], scores[ref], real,
-                                 args.scale, args.roi_mode)
+                                 args.scale, mode_map)
             log("  %s - %s: macro Δ=%.3f [%.3f, %.3f] P(>0)=%.2f | "
                 "qc_BA Δ=%.3f [%.3f, %.3f] P(>0)=%.2f"
                 % (name, ref, r["macro"]["mean"], r["macro"]["lo"],

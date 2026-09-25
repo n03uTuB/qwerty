@@ -90,15 +90,15 @@ python -m src.predict --input /data/input --output /data/output/results.csv
 
 | критерий | AUC base | AUC new | F1 base | F1 new |
 |---|---|---|---|---|
-| spine_positioning | 0.758 | 0.857 | 0.600 | 0.667 |
-| spine_axis | 0.826 | 0.826 | 0.500 | 0.500 |
+| spine_positioning | 0.758 | 0.862 | 0.600 | 0.667 |
+| spine_axis | 0.826 | 0.822 | 0.500 | 0.483 |
 | spine_artifacts | 0.753 | 0.859 | 0.500 | 0.634 |
 | femur_positioning | 0.566 | 0.668 | 0.483 | 0.500 |
 | femur_roi | 0.839 | 0.861 | 0.345 | 0.625 |
 
-organizer macro-F1: **0.304 -> 0.460** (укладка 0.062->0.476, ось 0.438,
+organizer macro-F1: **0.304 -> 0.468** (укладка 0.062->0.494, ось 0.438->0.452,
 предметы 0.429->0.611, ROI 0.286->0.316).
-`quality_class`: BA 0.566->0.710, macroF1 0.561->0.686, AUC 0.618->0.732.
+`quality_class`: BA 0.566->0.720, macroF1 0.561->0.694, AUC 0.618->0.731.
 
 Ключевой прирост даёт идея Astra: укладка позвоночника (AUC 0.758->0.857,
 F1 0.600->0.667) и предметы (AUC 0.753->0.859, F1 0.500->0.634). Укладка бедра
@@ -121,32 +121,32 @@ ROC-AUC 0.714 без изменений; ROI не ухудшен (0.286). Кла
 macro-F1 +0.096 (P=0.99). Скрипт — `scripts/diag_threshold_final.py`,
 подробности — раздел 8 `docs/report.md`.
 
-### Улучшение источников `femur_roi` / `spine_artifacts` (v4)
+### Улучшение источников скора по критериям (v4/v5)
 
 Порог поднял метрику за счёт правила; следующий шаг — **источник скора** для самых
 редких критериев (`scripts/exp_roi_source_real.py`, разбор
-`results/v4_source_upgrade.md`):
+`results/source_upgrade.md`):
 
 ```python
 CRITERION_SOURCES = {
-    "spine_positioning": "fused",
-    "spine_axis": "fused",
-    "spine_artifacts": "geo_bag",   # было fused: чистая геометрия art_*/atlas_* + bagging
-    "femur_positioning": "fused",
-    "femur_roi": "fused_bag",       # было cnn: гибрид + balanced bagging (7 позитивов!)
+    "spine_positioning": "fused_bag",  # было fused: 6 позитивов -> bagging
+    "spine_axis": "fused_bag",         # было fused: 10 позитивов -> bagging
+    "spine_artifacts": "geo_bag",      # было fused: чистая геометрия art_*/atlas_* + bagging
+    "femur_positioning": "fused",      # 36 позитивов: bagging не нужен
+    "femur_roi": "fused_bag",          # было cnn: гибрид + bagging (7 позитивов!)
 }
 ```
 
 Суффикс источника (`_lda`, `_bag`) выбирает классификатор (`src/stack_clf.py`).
 
 Seed-averaged (30 сидов × 5 фолдов `StratifiedGroupKFold` по `study_uid`, порог
-только по train-части) base → v4: organizer macro-F1 **0.352 → 0.505** (+0.153,
-30/30 сидов, Wilcoxon p<0.001), `quality_class` BA **0.663 → 0.705**, macro-F1
-**0.649 → 0.682**, ROC-AUC **0.717 → 0.735**. Исторический `fold_id`
-(`python -m src.evaluate --stacked`): macro-F1 **0.439 → 0.460**, BA **0.696 →
-0.710**, macro-F1 **0.675 → 0.686**, ROC-AUC **0.714 → 0.732**; метки «укладка» и
-«ось» без изменений, «предметы» 0.556→0.611, ROI 0.286→0.316. **Ни одна метрика
-не ухудшилась ни на одном протоколе.**
+только по train-части) base → v5: organizer macro-F1 **0.352 → 0.511** (+0.159,
+Wilcoxon p<0.001), `quality_class` BA **0.663 → 0.710**, macro-F1 **0.649 →
+0.688**, ROC-AUC **0.717 → 0.735**. Исторический `fold_id`
+(`python -m src.evaluate --stacked`): macro-F1 **0.439 → 0.468**, BA **0.696 →
+0.720**, macro-F1 **0.675 → 0.694**, ROC-AUC **0.714 → 0.731**; растут ВСЕ метки
+организатора («укладка» 0.476→0.494, «ось» 0.438→0.452, «предметы» 0.556→0.611,
+ROI 0.286→0.316). **Ни одна метрика не ухудшилась ни на одном протоколе.**
 
 ## Инфраструктура
 

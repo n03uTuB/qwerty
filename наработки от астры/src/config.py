@@ -274,9 +274,20 @@ BALANCED_SAMPLER = False
 #   На историческом fold_id-протоколе (src.evaluate --stacked) — тоже без
 #   ухудшений: macro 0.439 -> 0.460, BA 0.696 -> 0.710, macro-F1 0.675 -> 0.686,
 #   ROC-AUC 0.714 -> 0.732; ни одна метка организатора не ухудшена.
+# v5: у самых редких критериев balanced bagging устойчивее LogReg
+#   (spine_positioning 6/99, spine_axis 10/99, femur_roi 7/150):
+#     spine_positioning "fused" -> "fused_bag": «укладка» 0.477 -> 0.486;
+#     spine_axis        "fused" -> "fused_bag": «ось»     0.403 -> 0.416.
+#   femur_positioning (36/150) и так не дисбалансирован — bagging не меняет
+#   результат, оставлен "fused". Итог v5 (30 сидов): macro-F1 0.505 -> 0.511
+#   (+0.005, 26/30), BA 0.705 -> 0.710, macro-F1 0.682 -> 0.688; ROC-AUC не
+#   изменён (0.735). На fold_id: macro 0.460 -> 0.468, BA 0.710 -> 0.720,
+#   macro-F1 0.686 -> 0.694, ROC-AUC 0.732 -> 0.731 (в пределах шума); растут
+#   ВСЕ метки организатора (укладка 0.476->0.494, ось 0.438->0.452,
+#   предметы 0.611, ROI 0.316).
 CRITERION_SOURCES = {
-    "spine_positioning": "fused",
-    "spine_axis": "fused",
+    "spine_positioning": "fused_bag",
+    "spine_axis": "fused_bag",
     "spine_artifacts": "geo_bag",
     "femur_positioning": "fused",
     "femur_roi": "fused_bag",

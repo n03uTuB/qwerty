@@ -1,12 +1,5 @@
 реальных снимков: 252   режим порога: mapped   протокол: seeds   масштаб: cnn
 
---- spine_artifacts=fused,femur_roi=cnn ---
-  macro=0.352±0.024 | укладка=0.477 ось=0.403 предметы=0.523 ROI=0.005
-  quality_class: BA=0.663 macroF1=0.649 AUC=0.717
-
---- spine_artifacts=geo_bag,femur_roi=fused_bag ---
-  macro=0.505±0.028 | укладка=0.477 ось=0.403 предметы=0.583 ROI=0.559
-  quality_class: BA=0.705 macroF1=0.682 AUC=0.735
-
-=== парно по 30 сидам против 'spine_artifacts=fused,femur_roi=cnn' (знак / Wilcoxon) ===
-  spine_artifacts=geo_bag,femur_roi=fused_bag: macro Δ=0.153 p=0.000 (30/30) qc_BA Δ=0.042 p=0.000 (30/30) qc_mF1 Δ=0.033 p=0.000 (30/30) qc_AUC Δ=0.018 p=0.000 (30/30)
+--- spine_positioning=fused_bag,spine_axis=fused_bag,spine_artifacts=geo_bag,femur_roi=fused_bag,femur_positioning=fused_lda ---
+  macro=0.435±0.028 | укладка=0.183 ось=0.416 предметы=0.583 ROI=0.559
+  quality_class: BA=0.658 macroF1=0.659 AUC=0.694

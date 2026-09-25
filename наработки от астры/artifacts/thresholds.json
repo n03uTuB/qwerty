@@ -26,15 +26,15 @@
   },
   "violations": {
     "spine_positioning": {
-      "threshold": 0.7286849324265994,
+      "threshold": 0.7616292135383804,
       "f1": 0.6666666666666666,
       "mode": "prior",
       "n": 99,
       "pos": 6
     },
     "spine_axis": {
-      "threshold": 0.7404559666308193,
-      "f1": 0.4,
+      "threshold": 0.6871222228813344,
+      "f1": 0.3,
       "mode": "prior",
       "n": 99,
       "pos": 10

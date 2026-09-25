@@ -69,8 +69,9 @@ CRITERION_SOURCES = dict(getattr(C, "CRITERION_SOURCES", {}) or {})
 if _FEATURE_MODE == "base":
     # в базовом режиме укладка позвоночника — чистая CNN (как в v3),
     # а укладка бедра — чистая геометрия на базовом наборе признаков (как в v3);
-    # источники v4 (geo_bag/fused_bag) тоже откатываются к варианту v3.
+    # источники v4/v5 (geo_bag/fused_bag) тоже откатываются к варианту v3.
     CRITERION_SOURCES["spine_positioning"] = "cnn"
+    CRITERION_SOURCES["spine_axis"] = "fused"
     CRITERION_SOURCES["femur_positioning"] = "geo"
     CRITERION_SOURCES["spine_artifacts"] = "fused"
     CRITERION_SOURCES["femur_roi"] = "cnn"

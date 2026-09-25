@@ -368,16 +368,16 @@ F1 (порог с train-фолда, применение на val) — чтоб�
 
 ---
 
-## 9. Улучшение источников `femur_roi` и `spine_artifacts` (v4)
+## 9. Улучшение источников скора по критериям (v4/v5)
 
 Раздел 8 поднял метрику за счёт **правила порога**. Следующий шаг — **источник
 скора** для самых редких критериев. Скрипт `scripts/exp_roi_source_real.py`
 (честный замер на боевом контуре `src.stack` + функции `src.evaluate`), сырой лог
-`results/roi_source_real.txt`, разбор `results/v4_source_upgrade.md`.
+`results/roi_source_real.txt`, разбор `results/source_upgrade.md`.
 
 ### 9.1 Классификатор как часть источника
 
-В `src/stack.py` источник критерия теперь кодирует и входы, и модель
+Источник критерия (`config.CRITERION_SOURCES`) теперь кодирует и входы, и модель
 (`src/stack_clf.py`):
 
 | суффикс | модель | смысл |
@@ -385,6 +385,9 @@ F1 (порог с train-фолда, применение на val) — чтоб�
 | без суффикса (`fused`/`geo`) | LogReg | вариант v3 |
 | `_lda` | LDA со shrinkage | устойчив при 6–36 позитивах |
 | `_bag` | balanced bagging (EasyEnsemble) | очень редкие критерии |
+
+Класс `BalancedBag` вынесен в `src/stack_clf.py`, чтобы корректно сериализоваться
+в joblib (`src.stack` запускается как `python -m src.stack`, т.е. как `__main__`).
 
 ### 9.2 `femur_roi`: `cnn` → `fused_bag` (крупнейший единичный прирост)
 
@@ -400,38 +403,51 @@ femur_margin_min_cm]` с balanced bagging даёт F1 ≈ 0.56. Парно по 
 с CNN по F1 «предметов»: 0.523 → 0.583. Парно по 30 сидам Δmacro +0.015 (29/30),
 ΔBA +0.009, Δmacro-F1 +0.009, ΔROC-AUC +0.004 (все 30/30, p<0.001).
 
-### 9.4 Итог (base `d256907` → v4)
+### 9.4 `spine_positioning` и `spine_axis` → `fused_bag` (v5)
+
+У самых редких критериев balanced bagging устойчивее LogReg: «укладка» 0.477 →
+0.486 (6 позитивов), «ось» 0.403 → 0.416 (10 позитивов). Парно по 30 сидам против
+v4: Δmacro +0.005 (26/30, p<0.001), ΔBA +0.005, Δmacro-F1 +0.006, ΔROC-AUC 0.000
+(p=0.339, не ухудшено). `femur_positioning` (36/150) не дисбалансирован — bagging
+не меняет результат, оставлен `fused`.
+
+### 9.5 Итог (base `d256907` → v5)
 
 Seed-averaged (30 сидов, `StratifiedGroupKFold` по `study_uid`, порог только по
 train-части):
 
-| метрика | base | v4 | Δ (парно) |
+| метрика | base | v5 | Δ (парно) |
 |---|---|---|---|
-| organizer macro-F1 | 0.352 | **0.505** | **+0.153** (30/30, p<0.001) |
-| укладка / ось | 0.477 / 0.403 | 0.477 / 0.403 | 0 |
+| organizer macro-F1 | 0.352 | **0.511** | **+0.159** (p<0.001) |
+| укладка / ось | 0.477 / 0.403 | 0.486 / 0.416 | +0.009 / +0.013 |
 | предметы | 0.523 | **0.583** | +0.060 |
 | ROI | 0.005 | **0.559** | +0.554 |
-| quality_class BA | 0.663 | **0.705** | +0.042 |
-| quality_class macro-F1 | 0.649 | **0.682** | +0.033 |
+| quality_class BA | 0.663 | **0.710** | +0.047 |
+| quality_class macro-F1 | 0.649 | **0.688** | +0.039 |
 | quality_class ROC-AUC | 0.717 | **0.735** | +0.018 |
 
 Исторический `fold_id` (`python -m src.evaluate --stacked`): organizer macro-F1
-**0.439 → 0.460**, `quality_class` BA **0.696 → 0.710**, macro-F1 **0.675 → 0.686**,
-ROC-AUC **0.714 → 0.732**; метки «укладка» и «ось» без изменений, «предметы»
-0.556 → 0.611, ROI 0.286 → 0.316. **Ни одна метрика не ухудшилась.**
+**0.439 → 0.468**, `quality_class` BA **0.696 → 0.720**, macro-F1 **0.675 → 0.694**,
+ROC-AUC **0.714 → 0.731**; растут ВСЕ метки организатора: «укладка» 0.476 → 0.494,
+«ось» 0.438 → 0.452, «предметы» 0.556 → 0.611, ROI 0.286 → 0.316. **Ни одна
+метрика не ухудшилась.** (QC ROC-AUC v5 против v4 — в пределах шума: 0.731 против
+0.732.)
 
-### 9.5 Отвергнуто
+### 9.6 Отвергнуто
 
 * `spine_positioning=geo_lda` — регрессия по всем метрикам (0/30);
-* `spine_axis=geo_bag` — macro без изменений, но метка «ось» −0.004 (QC-метрики
-  растут); оставлено как резерв, в боевую конфигурацию не взято.
+* `spine_axis=geo_bag` — QC-метрики растут (BA 0.718, macro-F1 0.698, ROC-AUC
+  0.745), но метка «ось» −0.004; в боевую конфигурацию не взято;
+* `geo_bag`/`fused_lda` для `femur_positioning` — укладка 0.450 / 0.183;
+* режимы порога spine-критериев `blend`/`f1` — хуже `prior` (ось 0.324/0.284,
+  укладка 0.447/0.378 против 0.403/0.477).
 
-### 9.6 Как воспроизвести
+### 9.7 Как воспроизвести
 
 ```bash
 python scripts/exp_roi_source_real.py --protocol seeds --seeds 30 \
-    --map "spine_artifacts=fused,femur_roi=cnn" \
-    --map "spine_artifacts=geo_bag,femur_roi=fused_bag"
+    --map "spine_positioning=fused,spine_axis=fused,spine_artifacts=fused,femur_roi=cnn" \
+    --map "spine_positioning=fused_bag,spine_axis=fused_bag,spine_artifacts=geo_bag,femur_roi=fused_bag"
 python -m src.stack && python -m src.calibrate && python -m src.evaluate --stacked
 ```
 
