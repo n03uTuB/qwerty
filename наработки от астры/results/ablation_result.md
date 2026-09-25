@@ -6,9 +6,9 @@
 | femur_positioning | 0.566 | 0.668 | 0.483 | 0.500 |
 | femur_roi | 0.839 | 0.839 | 0.345 | 0.345 |
 
-organizer macro-F1: base=0.305 -> new=0.338
-  укладка: base=0.259 new=0.327
-  ось: base=0.214 new=0.214
-  предметы: base=0.462 new=0.526
+organizer macro-F1: base=0.304 -> new=0.439
+  укладка: base=0.062 new=0.476
+  ось: base=0.438 new=0.438
+  предметы: base=0.429 new=0.556
   ROI: base=0.286 new=0.286
-quality_class: BA 0.547->0.585  macroF1 0.462->0.521  AUC 0.618->0.714
+quality_class: BA 0.566->0.696  macroF1 0.561->0.675  AUC 0.618->0.714

@@ -15,7 +15,7 @@ import numpy as np
 
 from . import config as C
 from .data import load_manifest, real_mask
-from .metrics import pick_threshold
+from .metrics import pick_criterion_thresholds, pick_threshold
 
 
 def main():
@@ -63,19 +63,12 @@ def main():
     thresholds["quality_by_region"] = qbr
 
     vth = {}
-    for i, name in enumerate(C.VIOLATIONS):
-        col = "viol_" + name
-        if col not in manifest:
-            continue
-        yv = manifest[col].values.astype(float)
-        val = ~np.isnan(yv) & ~np.isnan(oof_v[:, i]) & real
-        if val.sum() and len(np.unique(yv[val])) > 1:
-            thr, f1 = pick_threshold(yv[val], oof_v[val, i])
-            vth[name] = dict(threshold=float(thr), f1=float(f1),
-                             n=int(val.sum()), pos=int((yv[val] > 0.5).sum()))
-        else:
-            vth[name] = dict(threshold=0.5, f1=None, n=int(val.sum()))
+    pct = pick_criterion_thresholds(manifest, oof_v, real)
+    for name, d in pct.items():
+        vth[name] = dict(threshold=d["threshold"], f1=d["f1"], mode=d["mode"],
+                         n=d["n"], pos=d["pos"])
     thresholds["violations"] = vth
+    thresholds["threshold_mode"] = C.THRESHOLD_MODE
 
     with open(C.THRESHOLDS_JSON, "w", encoding="utf-8") as f:
         json.dump(thresholds, f, ensure_ascii=False, indent=2)

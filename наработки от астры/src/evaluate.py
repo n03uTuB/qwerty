@@ -8,8 +8,10 @@
   3. метрика организатора — macro-F1 по 4 меткам, пороги выбраны ТОЛЬКО по
      train-части фолда (честно), затем применены к val-части и пулятся.
 
-Режим порога задаётся ``--thr`` (иначе config.THRESHOLD_MODE). Результат —
-artifacts/evaluate.json + artifacts/report.md.
+Режим порога задаётся ``--thr`` (иначе config.THRESHOLD_MODE; ``mapped`` —
+по критерию). В отчёте для критериев показаны и in-sample, и ЧЕСТНЫЕ (порог
+с train, применение на val) F1. Результат — artifacts/evaluate.json +
+artifacts/report.md.
 """
 from __future__ import annotations
 
@@ -25,7 +27,8 @@ from sklearn.metrics import (average_precision_score, balanced_accuracy_score,
 from . import config as C
 from .data import load_manifest, real_mask
 from .metrics import (ORG_LABEL_NAMES, bootstrap_ci, bootstrap_ci_by_study,
-                      org_label_truth, pick_threshold)
+                      org_label_truth, pick_criterion_thresholds,
+                      pick_threshold)
 
 EVAL_JSON = os.path.join(C.ARTIFACTS_DIR, "evaluate.json")
 REPORT_MD = os.path.join(C.ARTIFACTS_DIR, "report.md")
@@ -43,27 +46,16 @@ def _quality_class_from_criteria(df, oof_v, tr_v, fold_id, mode, real):
     n = len(df)
     q_prob = np.full(n, np.nan)
     q_class = np.full(n, np.nan)
-    fold_ids = sorted(set(fold_id[fold_id >= 0].tolist()))
-    thr_by_fold = {}
-    for k in fold_ids:
-        tr = np.where((fold_id != k) & real & ~np.isnan(tr_v[:, 0]))[0]
-        thr_by_fold[k] = {}
-        for i, name in enumerate(C.VIOLATIONS):
-            y_tr = df["viol_" + name].values.astype(float)[tr]
-            p_tr = tr_v[tr, i]
-            ok = ~np.isnan(y_tr) & ~np.isnan(p_tr)
-            if ok.sum() and len(np.unique(y_tr[ok])) > 1:
-                t, _ = pick_threshold(y_tr[ok], p_tr[ok], mode=mode)
-            else:
-                t = 0.5
-            thr_by_fold[k][name] = t
     regions = df["region"].values
+    fold_ids = sorted(set(fold_id[fold_id >= 0].tolist()))
     for k in fold_ids:
+        tr = (fold_id != k) & real & np.isfinite(tr_v[:, 0])
+        thr = pick_criterion_thresholds(df, tr_v, tr, mode=mode)
         va = np.where((fold_id == k) & real)[0]
         for i in va:
             crit = C.REGION_CRITERIA[regions[i]]
             probs = [oof_v[i, C.VIOLATION_IDX[c]] for c in crit]
-            fired = [p >= thr_by_fold[k][c] for p, c in zip(probs, crit)]
+            fired = [p >= thr[c]["threshold"] for p, c in zip(probs, crit)]
             finite = [p for p in probs if np.isfinite(p)]
             q_prob[i] = max(finite) if finite else np.nan
             q_class[i] = float(any(fired))
@@ -73,22 +65,22 @@ def _quality_class_from_criteria(df, oof_v, tr_v, fold_id, mode, real):
 def _organizer_honest(df, oof_v, tr_v, fold_id, mode, real):
     truth = {name: org_label_truth(df, name) for name in ORG_LABEL_NAMES}
     pooled_pred = {name: np.full(len(df), np.nan) for name in ORG_LABEL_NAMES}
+    crit_chunks = {name: [] for name in C.VIOLATIONS}
     fold_ids = sorted(set(fold_id[fold_id >= 0].tolist()))
     for k in fold_ids:
         va = np.where((fold_id == k) & real)[0]
-        tr = np.where((fold_id != k) & real & ~np.isnan(tr_v[:, 0]))[0]
+        tr = (fold_id != k) & real & np.isfinite(tr_v[:, 0])
         if len(va) == 0:
             continue
+        thr = pick_criterion_thresholds(df, tr_v, tr, mode=mode)
         crit_pred = {}
         for i, cname in enumerate(C.VIOLATIONS):
-            y_tr = df["viol_" + cname].values.astype(float)[tr]
-            p_tr = tr_v[tr, i]
-            ok = ~np.isnan(y_tr) & ~np.isnan(p_tr)
-            if ok.sum() and len(np.unique(y_tr[ok])) > 1:
-                thr, _ = pick_threshold(y_tr[ok], p_tr[ok], mode=mode)
-            else:
-                thr = 0.5
-            crit_pred[cname] = (oof_v[va, i] >= thr).astype(float)
+            t = thr[cname]["threshold"]
+            crit_pred[cname] = (oof_v[va, i] >= t).astype(float)
+            yv = df["viol_" + cname].values.astype(float)[va]
+            ok = ~np.isnan(yv) & np.isfinite(oof_v[va, i])
+            if ok.sum():
+                crit_chunks[cname].append((yv[ok], crit_pred[cname][ok]))
         for name in ORG_LABEL_NAMES:
             members = [crit_pred[c] for c in C.ORG_LABELS[name]]
             pooled_pred[name][va] = np.max(np.vstack(members), axis=0)
@@ -102,14 +94,22 @@ def _organizer_honest(df, oof_v, tr_v, fold_id, mode, real):
         f = float(f1_score(y, (p >= 0.5).astype(int), zero_division=0))
         per[name] = f
         vals.append(f)
+    crit_f1 = {}
+    for cname, chunks in crit_chunks.items():
+        if not chunks:
+            crit_f1[cname] = None
+            continue
+        y = np.concatenate([c[0] for c in chunks])
+        p = np.concatenate([c[1] for c in chunks])
+        crit_f1[cname] = (float(f1_score(y, p, zero_division=0))
+                          if len(np.unique(y)) > 1 else None)
     return dict(macro=float(np.mean(vals)) if vals else float("nan"),
-                per_label=per)
-
+                per_label=per, per_criterion_honest=crit_f1)
 
 def main():
     ap = argparse.ArgumentParser(description="Оценка гибридного DXA-QC решения")
     ap.add_argument("--thr", default=None,
-                    choices=["f1", "prior", "blend", "nested"],
+                    choices=["f1", "prior", "blend", "nested", "mapped"],
                     help="режим порога (по умолчанию config.THRESHOLD_MODE)")
     ap.add_argument("--manifest", default=C.MANIFEST_CSV)
     ap.add_argument("--stacked", action="store_true",
@@ -165,13 +165,15 @@ def main():
         yv = df["viol_" + name].values.astype(float)
         v = ~np.isnan(yv) & ~np.isnan(oof_v[:, i]) & real
         if v.sum() == 0 or len(np.unique(yv[v])) < 2:
-            per[name] = dict(n=int(v.sum()), f1=None, auc=None)
+            per[name] = dict(n=int(v.sum()), f1=None, auc=None, mode=mode)
             continue
         thr, f1 = pick_threshold(yv[v], oof_v[v, i], mode=mode)
+        mo = (C.THRESHOLD_MODE_BY_CRITERION.get(name)
+              if mode == "mapped" else mode)
         per[name] = dict(
             n=int(v.sum()), pos=int((yv[v] > 0.5).sum()),
             f1=float(f1), auc=float(roc_auc_score(yv[v], oof_v[v, i])),
-            thr=float(thr),
+            thr=float(thr), mode=mo,
             auc_ci=bootstrap_ci_by_study(yv[v], oof_v[v, i], groups[v], "auc"),
         )
     out["violations"] = per
@@ -203,6 +205,11 @@ def _write_report(out: dict):
     L = ["# Отчёт по качеству гибридного DXA-QC", ""]
     L.append("Режим порога: **%s**   Реальных снимков: **%d**" %
              (out.get("threshold_mode"), out.get("n", 0)))
+    if out.get("threshold_mode") == "mapped":
+        modes = {n: m.get("mode") for n, m in out.get("violations", {}).items()}
+        L.append("")
+        L.append("Режим по критериям: " +
+                 ", ".join("%s=%s" % (k, v) for k, v in modes.items()))
     L.append("")
     qc = out.get("quality_class")
     if qc:
@@ -228,20 +235,25 @@ def _write_report(out: dict):
               "|---|---|---|",
               "| ROC-AUC | %.3f | %s |" % (qh["auc"], _fmt_ci(qh.get("auc_ci"))),
               "| PR-AUC | %.3f | - |" % qh["ap"], ""]
+    honest = (org or {}).get("per_criterion_honest", {})
     L += ["## По критериям", "",
-          "| Критерий | N | Pos | F1 | ROC-AUC | 95% ДИ AUC | Порог |",
-          "|---|---|---|---|---|---|---|"]
+          "F1 (in-sample) — порог и метрика на одной части (оптимистична); "
+          "F1 (honest) — порог с train-фолда, применение на val, пул по фолдам.", "",
+          "| Критерий | N | Pos | F1 (in-sample) | F1 (honest) | ROC-AUC | 95% ДИ AUC | Порог | Режим |",
+          "|---|---|---|---|---|---|---|---|---|"]
     for name, m in out.get("violations", {}).items():
+        hf = honest.get(name)
+        hs = "-" if hf is None else "%.3f" % hf
+        mo = m.get("mode", "-")
         if m.get("f1") is None:
-            L.append("| %s | %d | - | - | - | - | - |" % (name, m["n"]))
+            L.append("| %s | %d | - | - | %s | - | - | - | %s |" % (name, m["n"], hs, mo))
             continue
-        L.append("| %s | %d | %d | %.3f | %.3f | %s | %.3f |" % (
-            name, m["n"], m["pos"], m["f1"], m["auc"], _fmt_ci(m.get("auc_ci")),
-            m["thr"]))
+        L.append("| %s | %d | %d | %.3f | %s | %.3f | %s | %.3f | %s |" % (
+            name, m["n"], m["pos"], m["f1"], hs, m["auc"], _fmt_ci(m.get("auc_ci")),
+            m["thr"], mo))
     L.append("")
     with open(REPORT_MD, "w", encoding="utf-8") as f:
         f.write("\n".join(L))
-
 
 if __name__ == "__main__":
     main()

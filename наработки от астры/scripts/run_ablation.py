@@ -24,8 +24,10 @@ from src.evaluate import EVAL_JSON  # noqa: E402
 def run(mode):
     env = dict(os.environ)
     env["DXA_FEATURE_MODE"] = mode
+    # режим порога — дефолт из config (THRESHOLD_MODE="mapped"), чтобы абляция
+    # шла на том же протоколе, что и боевая оценка
     for mod in (["-m", "src.stack"], ["-m", "src.calibrate"],
-                ["-m", "src.evaluate", "--thr", "f1", "--stacked"]):
+                ["-m", "src.evaluate", "--stacked"]):
         r = subprocess.run([sys.executable] + mod, cwd=ROOT, env=env,
                            capture_output=True)
         if r.returncode != 0:
@@ -63,7 +65,8 @@ def main():
         qb.get("macro_f1", 0), qn.get("macro_f1", 0),
         qb.get("auc", 0), qn.get("auc", 0)))
     txt = "\n".join(lines)
-    open(os.path.join(ROOT, "ablation_result.md"), "w", encoding="utf-8").write(txt)
+    out = os.path.join(ROOT, "results", "ablation_result.md")
+    open(out, "w", encoding="utf-8").write(txt)
     print(txt)
 
 

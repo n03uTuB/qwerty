@@ -12,7 +12,12 @@
                 подтверждённый v3 macro-F1 0.563);
   * ``blend`` — 0.5*(prior + f1): устойчив к калибровке (fable, +0.017..+0.021);
   * ``prior`` — столько снимков, сколько нарушений ожидается по доле;
-  * ``nested``— консервативно: при отсутствии групп откатывается к ``blend``.
+  * ``nested``— консервативно: при отсутствии групп откатывается к ``blend``;
+  * ``label`` — пороги критериев подбираются так, чтобы максимизировать F1
+                ИМЕННО меток организатора (OR-комбинаций), а не критериев
+                поодиночке (:func:`fit_org_label_thresholds`). Так как метрика
+                организатора считается по OR-меткам, это прямая оптимизация
+                целевой метрики.
 """
 from __future__ import annotations
 
@@ -71,8 +76,46 @@ def pick_threshold(y: np.ndarray, p: np.ndarray,
         # здесь безопасный откат к blend.
         thr = blend_threshold(y, p)
     else:
+        # "f1" и "mapped". Режим "mapped" — ПО КРИТЕРИЮ, реализован в
+        # pick_criterion_thresholds (здесь нет имени критерия), поэтому для
+        # одиночной пары (y, p) он эквивалентен "f1".
         return best_threshold(y, p)
     return float(thr), float(f1_score(y, (p >= thr).astype(int), zero_division=0))
+
+
+def pick_criterion_thresholds(df, probs: np.ndarray, mask: np.ndarray,
+                              mode: Optional[str] = None,
+                              by_criterion: Optional[Dict[str, str]] = None
+                              ) -> Dict[str, Dict]:
+    """Пороги ВСЕХ критериев ТЗ, подобранные на части ``mask``.
+
+    ``mode="mapped"`` (дефолт :data:`config.THRESHOLD_MODE`) — режим берётся для
+    каждого критерия из :data:`config.THRESHOLD_MODE_BY_CRITERION` (например,
+    ``prior`` для редких критериев и ``f1`` там, где ``prior`` вырождается).
+    Иначе — единый режим ``mode``.
+
+    Возвращает ``{criterion: dict(threshold, f1, mode, n, pos)}``.
+    """
+    mode = mode or getattr(C, "THRESHOLD_MODE", "f1")
+    if by_criterion is None:
+        by_criterion = getattr(C, "THRESHOLD_MODE_BY_CRITERION", {})
+    mask = np.asarray(mask, dtype=bool)
+    probs = np.asarray(probs)
+    out: Dict[str, Dict] = {}
+    for i, name in enumerate(C.VIOLATIONS):
+        y = df["viol_" + name].values.astype(float)[mask]
+        p = probs[mask, i].astype(float)
+        ok = ~np.isnan(y) & np.isfinite(p)
+        mo = by_criterion.get(name, "prior") if mode == "mapped" else mode
+        if ok.sum() and len(np.unique(y[ok])) > 1:
+            t, f = pick_threshold(y[ok], p[ok], mode=mo)
+        else:
+            t, f = 0.5, None
+        out[name] = dict(threshold=float(t),
+                         f1=(float(f) if f is not None else None),
+                         mode=mo, n=int(ok.sum()),
+                         pos=int((y[ok] > 0.5).sum()) if ok.sum() else 0)
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -178,6 +221,72 @@ def org_label_truth(df, name: str) -> np.ndarray:
         v = np.nan_to_num(df[col].values.astype(float), nan=0.0)
         out = v if i == 0 else np.maximum(out, v)
     return out
+
+
+def _best_f1_threshold(y: np.ndarray, p: np.ndarray,
+                       grid: np.ndarray) -> float:
+    """Порог из сетки, максимизирующий F1 (внутренний помощник)."""
+    from sklearn.metrics import f1_score
+
+    best, bt = -1.0, float(grid[len(grid) // 2])
+    for t in grid:
+        f = f1_score(y, (p >= t).astype(int), zero_division=0)
+        if f > best:
+            best, bt = f, float(t)
+    return bt
+
+
+def org_label_score(df, probs: np.ndarray, name: str):
+    """Скор метки организатора по вероятностям критериев.
+
+    Для каждой метки берётся максимум вероятностей ЕЁ критериев, но только там,
+    где критерий применим (истина критерия определена, т.е. не NaN). Возвращает
+    (score, applicable): ``applicable`` — маска снимков, где метка измерима.
+
+    Пример: «укладка» = max(spine_positioning, femur_positioning), причём на
+    снимках позвоночника применим только первый, на снимках бедра — только второй.
+    """
+    crits = ORG_LABELS[name]
+    n = len(df)
+    score = np.full(n, -np.inf, dtype=float)
+    applicable = np.zeros(n, dtype=bool)
+    for c in crits:
+        j = C.VIOLATION_IDX[c]
+        p = np.asarray(probs)[:, j].astype(float)
+        col = ("viol_" + c)
+        ok = np.isfinite(p)
+        if col in df:
+            ok = ok & ~np.isnan(df[col].values.astype(float))
+        score = np.where(ok, np.maximum(score, p), score)
+        applicable |= ok
+    return score, applicable
+
+
+def fit_org_label_thresholds(df, probs: np.ndarray, mask: np.ndarray,
+                             grid: Optional[np.ndarray] = None) -> Dict[str, float]:
+    """Пороги критериев, максимизирующие F1 меток организатора на части ``mask``.
+
+    В отличие от подбора порога под каждый критерий поодиночке, здесь целевая
+    функция — F1 именно OR-метки организатора (укладка/ось/предметы/ROI).
+    Для однометочных критериев (ось, предметы, ROI) порог = оптимальный порог
+    метки; для «укладки» порог общий для двух критериев и подобран по объединению
+    (критерии применимы на непересекающихся областях).
+
+    Возвращает ``{criterion: threshold}`` для всех критериев ТЗ.
+    """
+    if grid is None:
+        grid = np.linspace(0.05, 0.95, 91)
+    thr = {c: 0.5 for c in C.VIOLATIONS}
+    for name in ORG_LABEL_NAMES:
+        score, applicable = org_label_score(df, probs, name)
+        y = org_label_truth(df, name)
+        m = np.asarray(mask, dtype=bool) & applicable & np.isfinite(score)
+        if m.sum() < 2 or len(np.unique(y[m])) < 2:
+            continue
+        t = _best_f1_threshold(y[m], score[m], grid)
+        for c in ORG_LABELS[name]:
+            thr[c] = float(t)
+    return thr
 
 
 def organizer_macro_f1(truths: Dict[str, np.ndarray],

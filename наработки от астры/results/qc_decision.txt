@@ -1,0 +1,5 @@
+=== QC-решение ===
+  OR(f1)     QC BA=0.585 macroF1=0.521 AUC=0.714
+  OR(prior)  QC BA=0.659 macroF1=0.657 AUC=0.714
+  prob-f1    QC BA=0.513 macroF1=0.364 AUC=0.714
+  prob-BA    QC BA=0.608 macroF1=0.614 AUC=0.714
