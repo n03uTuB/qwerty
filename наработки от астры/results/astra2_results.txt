@@ -1,0 +1,51 @@
+реальных снимков: 252   сидов: 10
+
+=== AUC источников по критериям (реальные) ===
+  spine_positioning    n= 99 поз= 6 cnn=0.758 geo=0.842 fused=0.857 geo_lda=0.873 fused_lda=0.799 geo_bag=0.867 fused_bag=0.862 
+  spine_axis           n= 99 поз=10 cnn=0.411 geo=0.821 fused=0.826 geo_lda=0.818 fused_lda=0.796 geo_bag=0.833 fused_bag=0.822 
+  spine_artifacts      n= 99 поз=17 cnn=0.704 geo=0.862 fused=0.856 geo_lda=0.800 fused_lda=0.818 geo_bag=0.859 fused_bag=0.858 
+  femur_positioning    n=150 поз=36 cnn=0.627 geo=0.649 fused=0.668 geo_lda=0.637 fused_lda=0.637 geo_bag=0.649 fused_bag=0.667 
+  femur_roi            n=150 поз= 7 cnn=0.839 geo=0.870 fused=0.847 geo_lda=0.851 fused_lda=0.861 geo_bag=0.875 fused_bag=0.861 
+  карта по AUC: {'spine_positioning': 'geo_lda', 'spine_axis': 'geo_bag', 'spine_artifacts': 'geo_logreg', 'femur_positioning': 'fused_logreg', 'femur_roi': 'geo_bag'}
+
+=== БАЗА и масштаб порога ===
+  base fused(roi=cnn) mapped cnn-scale           macro=0.353±0.024 | укладка=0.478 ось=0.415 предметы=0.514 ROI=0.004 | BA=0.664 qF1=0.651 qAUC=0.716
+  base fused(roi=cnn) blend cnn-scale            macro=0.312±0.022 | укладка=0.380 ось=0.332 предметы=0.523 ROI=0.013 | BA=0.618 qF1=0.571 qAUC=0.716
+  base fused(roi=cnn) mapped clean-scale         macro=0.369±0.036 | укладка=0.462 ось=0.345 предметы=0.450 ROI=0.218 | BA=0.661 qF1=0.647 qAUC=0.716
+  base fused(roi=cnn) blend clean-scale          macro=0.375±0.023 | укладка=0.441 ось=0.372 предметы=0.498 ROI=0.190 | BA=0.670 qF1=0.656 qAUC=0.716
+  --- карта источников по AUC (выбор на всех данных, для ориентира) ---
+  карта AUC mapped clean-scale                   macro=0.447±0.038 | укладка=0.439 ось=0.363 предметы=0.465 ROI=0.522 | BA=0.681 qF1=0.673 qAUC=0.700
+  карта AUC blend clean-scale                    macro=0.451±0.035 | укладка=0.427 ось=0.325 предметы=0.537 ROI=0.517 | BA=0.690 qF1=0.677 qAUC=0.700
+  карта geo mapped clean-scale                   macro=0.446±0.032 | укладка=0.416 ось=0.375 предметы=0.465 ROI=0.528 | BA=0.654 qF1=0.647 qAUC=0.694
+
+=== #5/#7 источники: LDA-shrinkage и balanced bagging ===
+  все=geo_lda (roi=cnn) mapped cnn-scale         macro=0.194±0.022 | укладка=0.044 ось=0.362 предметы=0.367 ROI=0.004 | BA=0.554 qF1=0.521 qAUC=0.679
+  все=fused_lda (roi=cnn) mapped cnn-scale       macro=0.198±0.028 | укладка=0.149 ось=0.215 предметы=0.424 ROI=0.004 | BA=0.568 qF1=0.548 qAUC=0.679
+  все=geo_bag (roi=cnn) mapped cnn-scale         macro=0.359±0.018 | укладка=0.440 ось=0.409 предметы=0.581 ROI=0.004 | BA=0.668 qF1=0.661 qAUC=0.692
+  все=fused_bag (roi=cnn) mapped cnn-scale       macro=0.349±0.025 | укладка=0.490 ось=0.430 предметы=0.474 ROI=0.004 | BA=0.663 qF1=0.650 qAUC=0.715
+
+=== femur_roi: источник x масштаб порога (остальные=fused_logreg) ===
+  roi=cnn          scale=cnn                     macro=0.353±0.024 | укладка=0.478 ось=0.415 предметы=0.514 ROI=0.004 | BA=0.664 qF1=0.651 qAUC=0.716
+  roi=cnn          scale=clean                   macro=0.369±0.036 | укладка=0.462 ось=0.345 предметы=0.450 ROI=0.218 | BA=0.661 qF1=0.647 qAUC=0.716
+  roi=geo_logreg   scale=cnn                     macro=0.463±0.031 | укладка=0.478 ось=0.415 предметы=0.514 ROI=0.446 | BA=0.679 qF1=0.659 qAUC=0.717
+  roi=geo_logreg   scale=clean                   macro=0.446±0.042 | укладка=0.462 ось=0.345 предметы=0.450 ROI=0.526 | BA=0.683 qF1=0.675 qAUC=0.717
+  roi=geo_lda      scale=cnn                     macro=0.488±0.038 | укладка=0.478 ось=0.415 предметы=0.514 ROI=0.545 | BA=0.692 qF1=0.677 qAUC=0.725
+  roi=geo_lda      scale=clean                   macro=0.446±0.035 | укладка=0.462 ось=0.345 предметы=0.450 ROI=0.528 | BA=0.674 qF1=0.666 qAUC=0.725
+  roi=geo_bag      scale=cnn                     macro=0.433±0.028 | укладка=0.478 ось=0.415 предметы=0.514 ROI=0.324 | BA=0.684 qF1=0.664 qAUC=0.720
+  roi=geo_bag      scale=clean                   macro=0.445±0.043 | укладка=0.462 ось=0.345 предметы=0.450 ROI=0.522 | BA=0.682 qF1=0.674 qAUC=0.720
+  roi=fused_logreg scale=cnn                     macro=0.486±0.035 | укладка=0.478 ось=0.415 предметы=0.514 ROI=0.536 | BA=0.690 qF1=0.670 qAUC=0.725
+  roi=fused_logreg scale=clean                   macro=0.429±0.050 | укладка=0.462 ось=0.345 предметы=0.450 ROI=0.459 | BA=0.679 qF1=0.671 qAUC=0.725
+  roi=fused_bag    scale=cnn                     macro=0.489±0.038 | укладка=0.478 ось=0.415 предметы=0.514 ROI=0.549 | BA=0.694 qF1=0.673 qAUC=0.729
+  roi=fused_bag    scale=clean                   macro=0.416±0.037 | укладка=0.462 ось=0.345 предметы=0.450 ROI=0.406 | BA=0.679 qF1=0.670 qAUC=0.729
+
+=== #2 агрегация по исследованию (fused_logreg, mapped cnn-scale) ===
+  agg=none                                       macro=0.353±0.024 | укладка=0.478 ось=0.415 предметы=0.514 ROI=0.004 | BA=0.664 qF1=0.651 qAUC=0.716
+  agg=mean                                       macro=0.348±0.026 | укладка=0.461 ось=0.415 предметы=0.514 ROI=0.004 | BA=0.660 qF1=0.651 qAUC=0.718
+  agg=max                                        macro=0.355±0.025 | укладка=0.486 ось=0.415 предметы=0.514 ROI=0.004 | BA=0.666 qF1=0.639 qAUC=0.726
+  agg=meanmax                                    macro=0.350±0.025 | укладка=0.466 ось=0.415 предметы=0.514 ROI=0.004 | BA=0.656 qF1=0.639 qAUC=0.725
+  agg=wmean                                      macro=0.347±0.025 | укладка=0.456 ось=0.415 предметы=0.514 ROI=0.004 | BA=0.654 qF1=0.642 qAUC=0.723
+
+=== #6 прямая оптимизация порогов под macro-F1 организатора ===
+  org-thr l2=0.00 (clean-scale)                  macro=0.370±0.025 | укладка=0.413 ось=0.340 предметы=0.510 ROI=0.218 | BA=0.666 qF1=0.642 qAUC=0.716
+  org-thr l2=0.02 (clean-scale)                  macro=0.370±0.025 | укладка=0.413 ось=0.340 предметы=0.510 ROI=0.218 | BA=0.666 qF1=0.642 qAUC=0.716
+  org-thr l2=0.05 (clean-scale)                  macro=0.370±0.025 | укладка=0.413 ось=0.340 предметы=0.510 ROI=0.218 | BA=0.666 qF1=0.642 qAUC=0.716

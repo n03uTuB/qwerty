@@ -1,0 +1,1 @@
+ЛУЧШИЙ held-out: ['r_shaftax', 'femur_trochanter_bulge', 'femur_shaft_deg'] train=0.690 held=0.683±0.009

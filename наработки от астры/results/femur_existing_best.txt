@@ -1,0 +1,1 @@
+ЛУЧШИЙ held-out: ['femur_width_cm', 'femur_axis_angle', 'femur_bbox_h_ratio'] train=0.690 held=0.676±0.008

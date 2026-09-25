@@ -242,6 +242,12 @@ BALANCED_SAMPLER = False
 #   "fused" — гибрид CNN + геометрия (LogReg: вероятность CNN вместе с признаками);
 #   "geo"   — чистая геометрия (LogReg только по признакам).
 #
+# Суффикс меняет КЛАССИФИКАТОР (src/stack.py):
+#   без суффикса — LogReg (вариант v3);
+#   "_lda"       — LDA со shrinkage (устойчив при 6-36 позитивах);
+#   "_bag"       — balanced bagging / EasyEnsemble (для очень редких критериев).
+# Пример: "fused_bag" = гибрид [cnn_prob | признаки] + balanced bagging.
+#
 # v3 (opus_solution, честно на 20 разбиениях StratifiedGroupKFold по study_uid):
 #   * spine_axis: "fused" + spine_midline_residual -> F1 «ось» 0.423 -> 0.620
 #     (20/20 разбиений). Остаточная кривизна средней линии отличает «наклон от
@@ -254,12 +260,26 @@ BALANCED_SAMPLER = False
 # spine_positioning: s novymi atlas_/art_ priznakami "fused" chestno luchshe
 # cnn: AUC 0.758 -> 0.840, macro-F1 0.286 -> 0.513 (10x5 GroupKFold,
 # scripts/check_positioning_source.py).
+#
+# v4 (scripts/exp_roi_source_real.py + scripts/exp_astra2.py, честно):
+#   * femur_roi (7/150): источник "cnn" при пороге f1 вырождается (F1 ~0.00 на
+#     seed-averaged протоколе). Переход на "fused_bag" — крупнейший единичный
+#     прирост: ROI F1 0.005 -> 0.56, organizer macro-F1 0.352 -> 0.490.
+#   * spine_artifacts: "geo_bag" (чистая геометрия art_*/atlas_* + bagging)
+#     лучше "fused" по F1: «предметы» 0.523 -> 0.583, macro 0.490 -> 0.505.
+#   Итог v4 (30 сидов x 5 фолдов, StratifiedGroupKFold по study_uid, порог
+#   только по train-части): organizer macro-F1 0.352 -> 0.505, quality_class
+#   BA 0.663 -> 0.705, macro-F1 0.649 -> 0.682, ROC-AUC 0.717 -> 0.735;
+#   прирост по ВСЕМ четырём метрикам в 30/30 сидов (Wilcoxon p<0.001).
+#   На историческом fold_id-протоколе (src.evaluate --stacked) — тоже без
+#   ухудшений: macro 0.439 -> 0.460, BA 0.696 -> 0.710, macro-F1 0.675 -> 0.686,
+#   ROC-AUC 0.714 -> 0.732; ни одна метка организатора не ухудшена.
 CRITERION_SOURCES = {
     "spine_positioning": "fused",
     "spine_axis": "fused",
-    "spine_artifacts": "fused",
+    "spine_artifacts": "geo_bag",
     "femur_positioning": "fused",
-    "femur_roi": "cnn",
+    "femur_roi": "fused_bag",
 }
 
 # Переопределение геометрических наборов для гибридного стекера (stack.py).

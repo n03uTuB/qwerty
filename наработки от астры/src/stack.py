@@ -5,10 +5,14 @@
 поэтому логистическая регрессия поверх OOF-вероятностей CNN и признаков даёт
 калиброванную гибридную оценку. Обучение стекера — CV по study_uid (без утечки).
 
-Источник скора по критерию задаёт config.CRITERION_SOURCES (конфигурация v3):
+Источник скора по критерию задаёт config.CRITERION_SOURCES (конфигурации v3/v4):
   * ``cnn``   — чистая сеть (стекер не строится);
   * ``fused`` — гибрид [cnn_prob | features] -> LogReg;
   * ``geo``   — чистая геометрия [features] -> LogReg.
+
+Суффикс источника меняет классификатор (см. :mod:`src.stack_clf`):
+``_lda`` — LDA со shrinkage, ``_bag`` — balanced bagging (EasyEnsemble).
+Например, ``fused_bag`` = [cnn_prob | features] + balanced bagging.
 
 Артефакты: artifacts/stacker.joblib + artifacts/stack_metrics.json +
 artifacts/stack_oof_violation.npy (для калибровки порогов).
@@ -20,16 +24,14 @@ import os
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import GroupKFold
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
 from . import config as C
 from . import features as feat_lib
 from .data import load_manifest, real_mask
 from .metrics import best_threshold, bootstrap_ci
+from .stack_clf import BalancedBag, fit_clf, make_clf, parse_source  # noqa: F401
 
 STACKER_PATH = C.STACKER_PATH
 STACK_METRICS = C.STACK_METRICS
@@ -66,9 +68,12 @@ CRITERION_FEATURES.update(_OVERRIDE)
 CRITERION_SOURCES = dict(getattr(C, "CRITERION_SOURCES", {}) or {})
 if _FEATURE_MODE == "base":
     # в базовом режиме укладка позвоночника — чистая CNN (как в v3),
-    # а укладка бедра — чистая геометрия на базовом наборе признаков (как в v3)
+    # а укладка бедра — чистая геометрия на базовом наборе признаков (как в v3);
+    # источники v4 (geo_bag/fused_bag) тоже откатываются к варианту v3.
     CRITERION_SOURCES["spine_positioning"] = "cnn"
     CRITERION_SOURCES["femur_positioning"] = "geo"
+    CRITERION_SOURCES["spine_artifacts"] = "fused"
+    CRITERION_SOURCES["femur_roi"] = "cnn"
 
 
 def source_of(name: str) -> str:
@@ -76,23 +81,15 @@ def source_of(name: str) -> str:
     return CRITERION_SOURCES.get(name, "fused")
 
 
-def _make_clf() -> Pipeline:
-    return Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", LogisticRegression(max_iter=1000, class_weight="balanced", C=1.0)),
-    ])
-
-
-def _cv_fuse(X, cnn_prob, y, groups, n_splits=5):
-    """Кросс-валидированный гибридный скор: [cnn_prob | features] -> LR."""
+def _cv_fuse(X, cnn_prob, y, groups, n_splits=5, kind="logreg"):
+    """Кросс-валидированный гибридный скор: [cnn_prob | features] -> clf."""
     n = len(y)
     oof = np.full(n, np.nan)
     Xf = np.column_stack([cnn_prob, X])
     for tr, va in GroupKFold(n_splits=n_splits).split(Xf, groups=groups):
         if len(np.unique(y[tr])) < 2:
             continue
-        clf = _make_clf()
-        clf.fit(Xf[tr], y[tr])
+        clf = fit_clf(kind, Xf[tr], y[tr])
         oof[va] = clf.predict_proba(Xf[va])[:, 1]
     return oof
 
@@ -104,21 +101,20 @@ def _cv_cnn_only(cnn_prob, y, groups, n_splits=5):
     for tr, va in GroupKFold(n_splits=n_splits).split(Xf, groups=groups):
         if len(np.unique(y[tr])) < 2:
             continue
-        clf = _make_clf()
+        clf = make_clf()
         clf.fit(Xf[tr], y[tr])
         oof[va] = clf.predict_proba(Xf[va])[:, 1]
     return oof
 
 
-def _cv_geo_only(X, y, groups, n_splits=5):
-    """Кросс-валидированный скор только по геометрии: [features] -> LR."""
+def _cv_geo_only(X, y, groups, n_splits=5, kind="logreg"):
+    """Кросс-валидированный скор только по геометрии: [features] -> clf."""
     n = len(y)
     oof = np.full(n, np.nan)
     for tr, va in GroupKFold(n_splits=n_splits).split(X, y, groups=groups):
         if len(np.unique(y[tr])) < 2:
             continue
-        clf = _make_clf()
-        clf.fit(X[tr], y[tr])
+        clf = fit_clf(kind, X[tr], y[tr])
         oof[va] = clf.predict_proba(X[va])[:, 1]
     return oof
 
@@ -168,8 +164,9 @@ def build_scores(data: pd.DataFrame, oof_q: np.ndarray, oof_v: np.ndarray):
         idv = np.where(val)[0]
         cols = CRITERION_FEATURES.get(name, QUALITY_FEATURES)
         src = source_of(name)
+        base, kind = parse_source(src)
 
-        if src == "cnn" or not cols:
+        if base == "cnn" or not cols:
             stack_v[idv, j] = oof_v[idv, j]
             results["violations"][name] = _score(yv[idv], oof_v[idv, j])
             results["comparison"][name + "_cnn_only"] = results["violations"][name]
@@ -178,10 +175,12 @@ def build_scores(data: pd.DataFrame, oof_q: np.ndarray, oof_v: np.ndarray):
 
         Xv = data[cols].fillna(0).values if cols else np.zeros((n, 0), dtype=float)
         cnn_v = _cv_cnn_only(oof_v[idv, j], yv[idv].astype(int), groups[idv])
-        if src == "geo":
-            model_v = _cv_geo_only(Xv[idv], yv[idv].astype(int), groups[idv])
+        if base == "geo":
+            model_v = _cv_geo_only(Xv[idv], yv[idv].astype(int), groups[idv],
+                                   kind=kind)
         else:
-            model_v = _cv_fuse(Xv[idv], oof_v[idv, j], yv[idv].astype(int), groups[idv])
+            model_v = _cv_fuse(Xv[idv], oof_v[idv, j], yv[idv].astype(int),
+                               groups[idv], kind=kind)
         stack_v[idv, j] = model_v
         results["violations"][name] = _score(yv[idv], model_v)
         results["comparison"][name + "_cnn_only"] = _score(yv[idv], cnn_v)
@@ -199,16 +198,17 @@ def fit_final_stackers(data: pd.DataFrame, oof_v: np.ndarray) -> dict:
         val = ~np.isnan(yv) & ~np.isnan(oof_v[:, j]) & real
         cols = CRITERION_FEATURES.get(name, QUALITY_FEATURES)
         src = source_of(name)
-        if src not in ("fused", "geo") or not cols:
+        base, kind = parse_source(src)
+        if base not in ("fused", "geo") or not cols:
             continue
         if val.sum() and len(np.unique(yv[val])) > 1:
             Xv = data[cols].fillna(0).values if cols else np.zeros((n, 0), dtype=float)
-            use_cnn = (src == "fused")
-            base = (np.column_stack([oof_v[val, j], Xv[val]]) if use_cnn
-                    else Xv[val])
-            clf = _make_clf()
-            clf.fit(base, yv[val].astype(int))
-            stackers[name] = dict(clf=clf, features=list(cols), use_cnn=use_cnn)
+            use_cnn = (base == "fused")
+            base_X = (np.column_stack([oof_v[val, j], Xv[val]]) if use_cnn
+                      else Xv[val])
+            clf = fit_clf(kind, base_X, yv[val].astype(int))
+            stackers[name] = dict(clf=clf, features=list(cols),
+                                  use_cnn=use_cnn, kind=kind)
     try:
         import joblib
 
